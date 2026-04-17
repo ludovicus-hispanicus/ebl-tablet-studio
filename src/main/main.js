@@ -83,12 +83,47 @@ try {
 
 let mainWindow;
 
+let splashWindow = null;
+
+function createSplash() {
+  splashWindow = new BrowserWindow({
+    width: 480,
+    height: 320,
+    frame: false,
+    resizable: false,
+    movable: true,
+    alwaysOnTop: true,
+    transparent: false,
+    show: false,
+    backgroundColor: '#0e1a28',
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false,
+    },
+  });
+  splashWindow.loadFile(path.join(__dirname, '..', 'splash', 'splash.html'));
+  splashWindow.once('ready-to-show', () => {
+    splashWindow.show();
+    try {
+      splashWindow.webContents.send('splash-version', app.getVersion());
+    } catch (e) { /* ignore */ }
+  });
+  splashWindow.on('closed', () => { splashWindow = null; });
+}
+
+function splashStatus(message) {
+  if (splashWindow && !splashWindow.isDestroyed()) {
+    try { splashWindow.webContents.send('splash-status', message); } catch (e) { /* ignore */ }
+  }
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 1000,
     minHeight: 700,
+    show: false,  // defer until contents are loaded, then close splash
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -103,6 +138,14 @@ function createWindow() {
   mainWindow.webContents.on('before-input-event', (event, input) => {
     if (input.key === 'F12') {
       mainWindow.webContents.toggleDevTools();
+    }
+  });
+
+  // Once the renderer is fully loaded, swap splash → main window.
+  mainWindow.webContents.once('did-finish-load', () => {
+    mainWindow.show();
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.close();
     }
   });
 }
@@ -126,18 +169,53 @@ function initAutoUpdater() {
   });
 }
 
-app.whenReady().then(() => {
-  // One-time migration from the pre-merge AppData layout
-  // (%APPDATA%/tablet-image-renamer/ → %APPDATA%/eBL Tablet Studio/).
-  // Idempotent and safe to run every launch.
-  try {
-    migrateLegacyUserData();
-  } catch (e) {
-    console.error('[migrate] unexpected error:', e.message);
-  }
-  createWindow();
-  initAutoUpdater();
-});
+// Single-instance lock: if a second launch is attempted (user clicks the exe
+// again before the first instance's window appears), focus the existing
+// instance instead of spawning a duplicate.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      if (splashWindow.isMinimized()) splashWindow.restore();
+      splashWindow.focus();
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+
+  app.whenReady().then(() => {
+    createSplash();
+
+    // One-time migration from the pre-merge AppData layout
+    // (%APPDATA%/tablet-image-renamer/ → %APPDATA%/eBL Tablet Studio/).
+    // Idempotent and safe to run every launch.
+    splashStatus('Migrating settings\u2026');
+    try {
+      migrateLegacyUserData();
+    } catch (e) {
+      console.error('[migrate] unexpected error:', e.message);
+    }
+
+    splashStatus('Loading interface\u2026');
+    createWindow();
+
+    splashStatus('Checking for updates\u2026');
+    initAutoUpdater();
+
+    // Safety timeout: if something wedges and the main window never loads,
+    // drop the splash after 30s so the user isn't stuck staring at it.
+    setTimeout(() => {
+      if (splashWindow && !splashWindow.isDestroyed()) {
+        console.warn('[splash] safety timeout — closing splash without main window ready');
+        splashWindow.close();
+      }
+    }, 30000);
+  });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
