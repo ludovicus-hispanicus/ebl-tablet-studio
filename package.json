@@ -53,6 +53,14 @@
         }
       ]
     },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "eBL_Tablet_Studio-${version}-win-x64-setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "eBL_Tablet_Studio-${version}-win-x64-portable.${ext}"
+    },
     "mac": {
       "icon": "assets/icons/icon.icns",
       "target": [
@@ -67,10 +75,6 @@
     "linux": {
       "icon": "assets/icons/icon.png",
       "target": ["AppImage"]
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
     }
   }
 }
