@@ -8,6 +8,14 @@ on:
 permissions:
   contents: write
 
+env:
+  # Pinned standalone stitcher release (bundled as resources/stitcher/ via
+  # electron-builder extraResources). Update when a newer stitcher release
+  # is ready to ship. Phase B vendors stitcher source into this repo,
+  # eliminating the cross-repo download.
+  STITCHER_VERSION: v2.0-rc.16
+  STITCHER_REPO: ludovicus-hispanicus/ebl-photo-stitcher
+
 jobs:
   build:
     strategy:
@@ -37,6 +45,41 @@ jobs:
         run: |
           npm install --force @img/sharp-darwin-x64@0.33.5 @img/sharp-libvips-darwin-x64@1.0.4
           npm install --force @img/sharp-darwin-arm64@0.33.5 @img/sharp-libvips-darwin-arm64@1.0.4
+
+      - name: Download bundled stitcher (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p resources/stitcher
+          gh release download "$STITCHER_VERSION" \
+            --repo "$STITCHER_REPO" \
+            --pattern "eBL*Stitcher.exe" \
+            --dir resources/stitcher
+          ls -la resources/stitcher
+
+      - name: Download bundled stitcher (macOS arm64)
+        if: runner.os == 'macOS'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p resources/stitcher /tmp/stitcher-dmg
+          gh release download "$STITCHER_VERSION" \
+            --repo "$STITCHER_REPO" \
+            --pattern "*macOS_arm64.dmg" \
+            --dir /tmp/stitcher-dmg
+          DMG=$(ls /tmp/stitcher-dmg/*.dmg | head -1)
+          hdiutil attach "$DMG" -nobrowse -readonly -mountpoint /tmp/stitcher-mount
+          cp -R "/tmp/stitcher-mount/eBL Photo Stitcher.app" resources/stitcher/
+          hdiutil detach /tmp/stitcher-mount
+          ls -la resources/stitcher
+
+      - name: Prepare empty stitcher dir (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p resources/stitcher
+          echo "Stitcher is not shipped on Linux (Phase A)." > resources/stitcher/README.txt
 
       - name: Build
         run: npm run ${{ matrix.script }}
