@@ -26,6 +26,7 @@ Building a single app, **eBL Tablet Studio**, in a **new GitHub repo** (`ebl-tab
 - Changing CLI contracts for power users mid-merge — `process_tablets.py` stays callable with the same args.
 - Preserving the U2NET / rembg pipeline. It is being retired in favor of SAM.
 - Shipping torch in the production bundle. Torch is a dev-time dependency only (for model export).
+- Bundling tablet measurement data. All 6 built-in project JSONs ship with `measurements_file: ""`. Measurements are always user-provided via the Settings → Browse dialog. Rationale: measurement data changes over time and goes stale fast; bundling it creates a maintenance burden and misleads users who think the bundled data is authoritative. Today's stitcher ships `bm_measurements.json` — this is dropped in Phase B when we vendor project JSONs into the new repo.
 
 ---
 
