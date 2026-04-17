@@ -108,13 +108,23 @@ function autoDetectStitcherExe() {
 
 /**
  * Run the stitcher exe in headless mode.
- * The exe is called with: --headless --root <folder> --json-progress [--tablets <name1> <name2> ...]
+ *
+ * Base args: --headless --root <folder> --json-progress [--tablets <name1> ...]
+ *
+ * Optional extraArgs (from active project config; empty/undefined = omit):
+ *   museum          → --museum <name>
+ *   photographer    → --photographer <name>
+ *   rulerPosition   → --ruler-position <top|bottom|left|right>
+ *   addLogo         → --add-logo (flag)
+ *   logoPath        → --logo-path <path>
+ *   measurements    → --measurements <path>
+ *
  * onProgress receives log events: { type, message }
  * Returns a promise: { success, exitCode, error? }
  *
  * If exePath is empty or invalid, falls back to the bundled binary.
  */
-function runStitcherHeadless(exePath, rootFolder, tablets, onProgress) {
+function runStitcherHeadless(exePath, rootFolder, tablets, onProgress, extraArgs = {}) {
   return new Promise((resolve) => {
     // Resolve path: explicit arg → bundled fallback
     let resolved = exePath;
@@ -129,6 +139,13 @@ function runStitcherHeadless(exePath, rootFolder, tablets, onProgress) {
     }
 
     const args = ['--headless', '--root', rootFolder, '--json-progress'];
+
+    if (extraArgs.museum) args.push('--museum', extraArgs.museum);
+    if (extraArgs.photographer) args.push('--photographer', extraArgs.photographer);
+    if (extraArgs.rulerPosition) args.push('--ruler-position', extraArgs.rulerPosition);
+    if (extraArgs.addLogo) args.push('--add-logo');
+    if (extraArgs.logoPath) args.push('--logo-path', extraArgs.logoPath);
+    if (extraArgs.measurements) args.push('--measurements', extraArgs.measurements);
 
     if (tablets && tablets.length > 0) {
       args.push('--tablets', ...tablets);

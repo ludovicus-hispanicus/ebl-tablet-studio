@@ -227,13 +227,19 @@ document.getElementById('btn-reprocess-all').addEventListener('click', reprocess
 document.getElementById('btn-settings').addEventListener('click', openSettings);
 document.getElementById('settings-close').addEventListener('click', closeSettings);
 document.getElementById('settings-save').addEventListener('click', saveSettings);
-document.getElementById('setting-browse-stitcher').addEventListener('click', browseStitcherExe);
 document.getElementById('setting-browse-measurements').addEventListener('click', async () => {
   const path = await window.api.selectMeasurementsFile();
   if (path) document.getElementById('setting-measurements').value = path;
 });
 document.getElementById('setting-clear-measurements').addEventListener('click', () => {
   document.getElementById('setting-measurements').value = '';
+});
+document.getElementById('setting-browse-logo').addEventListener('click', async () => {
+  const path = await window.api.selectLogoFile();
+  if (path) document.getElementById('setting-logo-path').value = path;
+});
+document.getElementById('setting-clear-logo').addEventListener('click', () => {
+  document.getElementById('setting-logo-path').value = '';
 });
 document.getElementById('settings-overlay').addEventListener('click', (e) => {
   if (e.target.id === 'settings-overlay') closeSettings();
@@ -2006,28 +2012,7 @@ let currentProjectName = '';
 
 async function openSettings() {
   const config = await window.api.getStitcherConfig();
-  let exePath = config.stitcherExe || '';
-
-  // Auto-detect if not configured
-  if (!exePath) {
-    const detected = await window.api.autoDetectStitcher();
-    if (detected) {
-      exePath = detected;
-      setStatus('Auto-detected stitcher: ' + detected);
-    }
-  }
-
-  document.getElementById('setting-stitcher-exe').value = exePath;
-  if (exePath) {
-    await verifyStitcherUI(exePath);
-  } else {
-    document.getElementById('setting-stitcher-status').textContent = 'Not configured — click Browse to locate eBL Photo Stitcher';
-    document.getElementById('setting-stitcher-status').className = 'settings-hint';
-  }
-
-  // Load projects
   await loadProjectList(config.activeProject);
-
   document.getElementById('settings-overlay').classList.remove('hidden');
 }
 
@@ -2066,6 +2051,8 @@ async function loadProjectFields(projectName) {
   document.getElementById('setting-measurements').value = project.measurements_file || '';
   document.getElementById('setting-ruler-position').value = project.fixed_ruler_position || 'top';
   document.getElementById('setting-credit').value = project.credit_line || '';
+  document.getElementById('setting-logo-enabled').checked = !!project.logo_enabled;
+  document.getElementById('setting-logo-path').value = project.logo_path || '';
 
   const bg = project.background_color || [0, 0, 0];
   document.getElementById('setting-background').value =
@@ -2076,30 +2063,10 @@ function closeSettings() {
   document.getElementById('settings-overlay').classList.add('hidden');
 }
 
-async function browseStitcherExe() {
-  const exePath = await window.api.selectStitcherExe();
-  if (exePath) {
-    document.getElementById('setting-stitcher-exe').value = exePath;
-    await verifyStitcherUI(exePath);
-  }
-}
-
-async function verifyStitcherUI(exePath) {
-  const statusEl = document.getElementById('setting-stitcher-status');
-  const result = await window.api.verifyStitcherExe(exePath);
-  if (result.valid) {
-    statusEl.textContent = '\u2713 eBL Photo Stitcher found';
-    statusEl.className = 'settings-hint valid';
-  } else {
-    statusEl.textContent = '\u2717 ' + result.reason;
-    statusEl.className = 'settings-hint invalid';
-  }
-}
-
 async function saveSettings() {
-  // Save stitcher config
+  // Save active project selection (stitcher exe is resolved to the bundled
+  // binary automatically — no user config needed)
   const config = {
-    stitcherExe: document.getElementById('setting-stitcher-exe').value.trim(),
     activeProject: document.getElementById('setting-project-select').value,
   };
   await window.api.saveStitcherConfig(config);
@@ -2116,6 +2083,8 @@ async function saveSettings() {
       ruler_position_locked: true,
       credit_line: document.getElementById('setting-credit').value.trim(),
       background_color: bgValue === 'white' ? [255, 255, 255] : [0, 0, 0],
+      logo_enabled: document.getElementById('setting-logo-enabled').checked,
+      logo_path: document.getElementById('setting-logo-path').value.trim(),
     };
 
     // Merge with existing project to preserve fields we don't edit here
@@ -2212,17 +2181,10 @@ async function reprocessAll() {
 }
 
 async function runStitcher(tablets) {
-  const config = await window.api.getStitcherConfig();
-  if (!config.stitcherExe) {
-    alert('eBL Photo Stitcher not configured. Open Settings (gear icon) to set it up.');
-    openSettings();
-    return;
-  }
-
-  const verification = await window.api.verifyStitcherExe(config.stitcherExe);
+  // Bundled stitcher binary is always present; just sanity-check before running.
+  const verification = await window.api.verifyStitcherExe();
   if (!verification.valid) {
-    alert(`Stitcher not found: ${verification.reason}\n\nOpen Settings to fix.`);
-    openSettings();
+    alert(`Bundled stitcher not found: ${verification.reason}\n\nThis indicates a broken install — please reinstall eBL Tablet Studio.`);
     return;
   }
 

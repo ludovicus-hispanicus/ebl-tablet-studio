@@ -237,9 +237,25 @@ ipcMain.handle('select-stitcher-exe', async () => {
 
 ipcMain.handle('process-tablets', async (event, rootFolder, tablets) => {
   const config = loadStitcherConfig();
+  // Resolve active project so the stitcher uses the settings the user
+  // configured in the Settings panel (photographer, ruler position, logo, etc.)
+  // rather than the stitcher's CLI defaults.
+  let project = null;
+  if (config.activeProject) {
+    project = await projectManager.getProjectByName(config.activeProject);
+  }
+  const extraArgs = {};
+  if (project) {
+    extraArgs.museum = project.name;
+    if (project.photographer) extraArgs.photographer = project.photographer;
+    if (project.fixed_ruler_position) extraArgs.rulerPosition = project.fixed_ruler_position;
+    if (project.logo_enabled) extraArgs.addLogo = true;
+    if (project.logo_path) extraArgs.logoPath = project.logo_path;
+    if (project.measurements_file) extraArgs.measurements = project.measurements_file;
+  }
   return runStitcherHeadless(config.stitcherExe, rootFolder, tablets, (progress) => {
     mainWindow.webContents.send('stitcher-progress', progress);
-  });
+  }, extraArgs);
 });
 
 ipcMain.handle('delete-image', async (event, imagePath) => {
@@ -409,6 +425,16 @@ ipcMain.handle('select-measurements-file', async () => {
     properties: ['openFile'],
     title: 'Select Measurements File',
     filters: [{ name: 'Measurements', extensions: ['xlsx', 'xls', 'json'] }],
+  });
+  if (result.canceled) return null;
+  return result.filePaths[0];
+});
+
+ipcMain.handle('select-logo-file', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile'],
+    title: 'Select Logo Image',
+    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'svg'] }],
   });
   if (result.canceled) return null;
   return result.filePaths[0];

@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('api', {
   deleteProject: (name) => ipcRenderer.invoke('delete-project', name),
   newProject: (name) => ipcRenderer.invoke('new-project', name),
   selectMeasurementsFile: () => ipcRenderer.invoke('select-measurements-file'),
+  selectLogoFile: () => ipcRenderer.invoke('select-logo-file'),
   onStitcherProgress: (callback) => ipcRenderer.on('stitcher-progress', (event, data) => callback(data)),
   offStitcherProgress: () => ipcRenderer.removeAllListeners('stitcher-progress'),
 
