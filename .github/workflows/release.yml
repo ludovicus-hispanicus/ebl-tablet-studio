@@ -126,3 +126,5 @@ jobs:
         with:
           files: artifacts/*
           generate_release_notes: true
+          # Any tag with a hyphen (v1.2.3-beta.1, v1.2.3-rc.1, etc.) is a prerelease.
+          prerelease: ${{ contains(github.ref_name, '-') }}
