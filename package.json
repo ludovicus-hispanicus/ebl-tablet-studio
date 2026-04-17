@@ -1,0 +1,71 @@
+{
+  "name": "ebl-tablet-studio",
+  "version": "0.1.0",
+  "description": "Unified desktop app for cuneiform tablet image renaming, segmentation, and stitching. Successor to tablet-image-renamer and ebl-photo-stitcher.",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "dist": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux",
+    "dist:dir": "electron-builder --win --dir"
+  },
+  "dependencies": {
+    "exifr": "^7.1.3",
+    "sharp": "^0.33.0"
+  },
+  "devDependencies": {
+    "electron": "31.7.7",
+    "electron-builder": "^25.1.8",
+    "electron-reload": "^2.0.0-alpha.1"
+  },
+  "build": {
+    "appId": "com.ebl.tablet-studio",
+    "productName": "eBL Tablet Studio",
+    "artifactName": "eBL_Tablet_Studio-${version}-${os}-${arch}.${ext}",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "python",
+        "to": "python",
+        "filter": ["**/*", "!weights/**", "!__pycache__/**", "!*.pyc"]
+      }
+    ],
+    "win": {
+      "icon": "assets/icons/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "mac": {
+      "icon": "assets/icons/icon.icns",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "category": "public.app-category.productivity",
+      "identity": null
+    },
+    "linux": {
+      "icon": "assets/icons/icon.png",
+      "target": ["AppImage"]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
