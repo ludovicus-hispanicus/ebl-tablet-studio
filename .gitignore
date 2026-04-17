@@ -1,0 +1,47 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Electron build outputs
+dist/
+build/
+out/
+release/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Bundled stitcher binary (downloaded by CI, never committed)
+resources/stitcher/
+
+# ML model weights (downloaded on first run or via CI)
+resources/models/
+*.onnx
+*.pt
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Env / secrets
+.env
+.env.local
+*.pem
+*.key
