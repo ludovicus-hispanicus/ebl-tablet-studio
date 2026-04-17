@@ -14,52 +14,117 @@
       user-select: none;
       -webkit-user-select: none;
       -webkit-app-region: drag;
+      background: #0e1a28;
+      color: #f0f0f0;
     }
-    .splash {
-      width: 100vw;
-      height: 100vh;
-      background: linear-gradient(135deg, #1a2a3a 0%, #0e1a28 100%);
+
+    /* Background slideshow — stacked, cross-fade via opacity */
+    .slide {
+      position: absolute;
+      inset: 0;
+      background-size: cover;
+      background-position: center;
+      opacity: 0;
+      transition: opacity 1.2s ease-in-out;
+      filter: brightness(0.55);
+    }
+    .slide.active {
+      opacity: 1;
+    }
+
+    /* Dim gradient to boost text legibility */
+    .overlay {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg,
+        rgba(14, 26, 40, 0.55) 0%,
+        rgba(14, 26, 40, 0.35) 40%,
+        rgba(14, 26, 40, 0.85) 100%);
+      pointer-events: none;
+    }
+
+    .content {
+      position: relative;
+      z-index: 1;
       display: flex;
       flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      color: #f0f0f0;
+      height: 100%;
       box-sizing: border-box;
-      padding: 32px;
+      padding: 28px 32px 24px 32px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
     }
     .logo {
-      width: 120px;
-      height: 120px;
-      margin-bottom: 20px;
-      filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.4));
+      width: 48px;
+      height: 48px;
+      filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.6));
     }
     .title {
-      font-size: 22px;
+      font-size: 20px;
       font-weight: 600;
       letter-spacing: 0.3px;
-      margin-bottom: 4px;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
     }
     .version {
       font-size: 11px;
-      opacity: 0.55;
-      margin-bottom: 32px;
+      opacity: 0.65;
       letter-spacing: 0.5px;
+      margin-top: 2px;
     }
-    .status {
-      font-size: 13px;
+
+    .spacer {
+      flex: 1;
+    }
+
+    .log {
+      font-size: 11.5px;
+      font-family: "SF Mono", "Consolas", "Menlo", "Courier New", monospace;
+      color: rgba(255, 255, 255, 0.85);
       opacity: 0.9;
-      text-align: center;
-      min-height: 18px;
-      margin-bottom: 16px;
-      letter-spacing: 0.2px;
+      line-height: 1.55;
+      max-height: 90px;
+      overflow: hidden;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+    }
+    .log-entry {
+      animation: fade-in 0.3s ease-out;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .log-entry .time {
+      opacity: 0.5;
+      margin-right: 8px;
+    }
+    @keyframes fade-in {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .footer {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 14px;
     }
     .spinner {
-      width: 22px;
-      height: 22px;
-      border: 2px solid rgba(255, 255, 255, 0.15);
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255, 255, 255, 0.2);
       border-top-color: rgba(255, 255, 255, 0.85);
       border-radius: 50%;
       animation: spin 0.85s linear infinite;
+      flex-shrink: 0;
+    }
+    .status {
+      font-size: 12px;
+      opacity: 0.95;
+      letter-spacing: 0.2px;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
     }
     @keyframes spin {
       to { transform: rotate(360deg); }
@@ -67,23 +132,76 @@
   </style>
 </head>
 <body>
-  <div class="splash">
-    <img class="logo" src="../../assets/icons/icon.png" alt="eBL Tablet Studio" />
-    <div class="title">eBL Tablet Studio</div>
-    <div class="version" id="version"></div>
-    <div class="status" id="status">Starting&hellip;</div>
-    <div class="spinner"></div>
+  <div class="slide active" style="background-image: url('images/01.jpg');"></div>
+  <div class="slide" style="background-image: url('images/02.jpg');"></div>
+  <div class="slide" style="background-image: url('images/03.jpg');"></div>
+
+  <div class="overlay"></div>
+
+  <div class="content">
+    <div class="header">
+      <img class="logo" src="../../assets/icons/icon.png" alt="" />
+      <div>
+        <div class="title">eBL Tablet Studio</div>
+        <div class="version" id="version"></div>
+      </div>
+    </div>
+
+    <div class="spacer"></div>
+
+    <div class="log" id="log"></div>
+
+    <div class="footer">
+      <div class="spinner"></div>
+      <div class="status" id="status">Starting&hellip;</div>
+    </div>
   </div>
+
   <script>
     const { ipcRenderer } = require('electron');
+
+    // Cross-fade the background slides every 3.5s.
+    const slides = document.querySelectorAll('.slide');
+    let slideIdx = 0;
+    if (slides.length > 1) {
+      setInterval(() => {
+        slides[slideIdx].classList.remove('active');
+        slideIdx = (slideIdx + 1) % slides.length;
+        slides[slideIdx].classList.add('active');
+      }, 3500);
+    }
+
+    // Log panel — keeps the latest few status messages visible, newest at bottom.
+    const MAX_LOG_ENTRIES = 4;
+    const logEl = document.getElementById('log');
+    const statusEl = document.getElementById('status');
+
+    function now() {
+      const d = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+
+    function appendLog(message) {
+      const entry = document.createElement('div');
+      entry.className = 'log-entry';
+      entry.innerHTML = `<span class="time">${now()}</span>${message}`;
+      logEl.appendChild(entry);
+      while (logEl.children.length > MAX_LOG_ENTRIES) {
+        logEl.removeChild(logEl.firstChild);
+      }
+    }
+
     ipcRenderer.on('splash-status', (event, message) => {
-      const el = document.getElementById('status');
-      if (el) el.textContent = message;
+      statusEl.textContent = message;
+      appendLog(message);
     });
     ipcRenderer.on('splash-version', (event, version) => {
       const el = document.getElementById('version');
       if (el) el.textContent = 'v' + version;
     });
+
+    appendLog('Starting eBL Tablet Studio');
   </script>
 </body>
 </html>
