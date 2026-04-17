@@ -5,6 +5,43 @@ const os = require('os');
 
 const CONFIG_FILE = 'stitcher-config.json';
 
+// Bundled stitcher artifact name (from GitHub release v2.0-rc.16)
+const BUNDLED_EXE_WIN = 'eBL.Photo.Stitcher.exe';
+const BUNDLED_APP_MAC = 'eBL Photo Stitcher.app';
+
+/**
+ * Resolve the path to the bundled stitcher binary.
+ *
+ * - Dev (unpackaged): resources/stitcher/ at repo root.
+ * - Packaged: process.resourcesPath/stitcher/ (populated via extraResources).
+ *
+ * Returns the path even if the file doesn't exist — caller should verify.
+ */
+function isPackaged() {
+  try {
+    return require('electron').app.isPackaged;
+  } catch (e) {
+    // Not inside Electron main process (e.g. bare node test) — treat as dev.
+    return false;
+  }
+}
+
+function resolveStitcherPath() {
+  const baseDir = isPackaged()
+    ? path.join(process.resourcesPath, 'stitcher')
+    : path.join(__dirname, '..', '..', 'resources', 'stitcher');
+
+  if (process.platform === 'win32') {
+    return path.join(baseDir, BUNDLED_EXE_WIN);
+  }
+  if (process.platform === 'darwin') {
+    // The .app bundle's actual binary is inside Contents/MacOS/
+    return path.join(baseDir, BUNDLED_APP_MAC, 'Contents', 'MacOS', 'eBL Photo Stitcher');
+  }
+  // Linux: no stitcher bundle today. Caller should gate by platform.
+  return path.join(baseDir, 'eBL Photo Stitcher');
+}
+
 function getConfigPath() {
   const userData = process.env.APPDATA || path.join(os.homedir(), '.config');
   const dir = path.join(userData, 'tablet-image-renamer');
@@ -14,20 +51,27 @@ function getConfigPath() {
 
 function loadStitcherConfig() {
   const configPath = getConfigPath();
-  if (!fs.existsSync(configPath)) {
-    return { stitcherExe: '' };
-  }
-  try {
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    // Migrate from old formats
-    if (!config.stitcherExe) {
-      config.stitcherExe = config.scriptPath || '';
+  let config = { stitcherExe: '' };
+  if (fs.existsSync(configPath)) {
+    try {
+      config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      if (!config.stitcherExe) {
+        config.stitcherExe = config.scriptPath || '';
+      }
+    } catch (err) {
+      console.error('Error loading stitcher config:', err.message);
     }
-    return config;
-  } catch (err) {
-    console.error('Error loading stitcher config:', err.message);
-    return { stitcherExe: '' };
   }
+  // Always prefer the bundled path when it exists. User-configured paths from
+  // older versions of the app are ignored (left in the file for rollback).
+  const bundled = resolveStitcherPath();
+  if (fs.existsSync(bundled)) {
+    if (config.stitcherExe && config.stitcherExe !== bundled) {
+      console.log(`Ignoring user-configured stitcherExe (${config.stitcherExe}); using bundled binary.`);
+    }
+    config.stitcherExe = bundled;
+  }
+  return config;
 }
 
 function saveStitcherConfig(config) {
@@ -42,43 +86,23 @@ function saveStitcherConfig(config) {
 }
 
 /**
- * Verify the stitcher exe exists.
+ * Verify the stitcher exe exists. Accepts an explicit path or falls back to
+ * the bundled path.
  */
 function verifyStitcherExe(exePath) {
-  if (!exePath) return { valid: false, reason: 'Stitcher path not set' };
-  if (!fs.existsSync(exePath)) return { valid: false, reason: 'File not found' };
-  return { valid: true };
+  const p = exePath || resolveStitcherPath();
+  if (!p) return { valid: false, reason: 'Stitcher path not set' };
+  if (!fs.existsSync(p)) return { valid: false, reason: `Bundled stitcher not found at ${p}` };
+  return { valid: true, path: p };
 }
 
 /**
- * Try to auto-detect the stitcher exe in common locations.
- * Returns the path if found, null otherwise.
+ * Auto-detect kept for backward compatibility with the existing settings UI.
+ * Post-merge, this always returns the bundled path (if it exists).
  */
 function autoDetectStitcherExe() {
-  const candidates = [];
-
-  // Same folder as the renamer app
-  const appDir = path.dirname(process.execPath);
-  candidates.push(path.join(appDir, 'eBL Photo Stitcher.exe'));
-  candidates.push(path.join(appDir, 'eBL Photo Stitcher'));
-
-  // Common install locations (Windows)
-  if (process.platform === 'win32') {
-    const programFiles = process.env['ProgramFiles'] || 'C:\\Program Files';
-    candidates.push(path.join(programFiles, 'eBL Photo Stitcher', 'eBL Photo Stitcher.exe'));
-    // Desktop
-    const desktop = path.join(os.homedir(), 'Desktop');
-    candidates.push(path.join(desktop, 'eBL Photo Stitcher.exe'));
-  }
-
-  // macOS
-  if (process.platform === 'darwin') {
-    candidates.push('/Applications/eBL Photo Stitcher.app/Contents/MacOS/eBL Photo Stitcher');
-  }
-
-  for (const p of candidates) {
-    if (fs.existsSync(p)) return p;
-  }
+  const bundled = resolveStitcherPath();
+  if (fs.existsSync(bundled)) return bundled;
   return null;
 }
 
@@ -87,10 +111,18 @@ function autoDetectStitcherExe() {
  * The exe is called with: --headless --root <folder> --json-progress [--tablets <name1> <name2> ...]
  * onProgress receives log events: { type, message }
  * Returns a promise: { success, exitCode, error? }
+ *
+ * If exePath is empty or invalid, falls back to the bundled binary.
  */
 function runStitcherHeadless(exePath, rootFolder, tablets, onProgress) {
   return new Promise((resolve) => {
-    const verification = verifyStitcherExe(exePath);
+    // Resolve path: explicit arg → bundled fallback
+    let resolved = exePath;
+    if (!resolved || !fs.existsSync(resolved)) {
+      resolved = resolveStitcherPath();
+    }
+
+    const verification = verifyStitcherExe(resolved);
     if (!verification.valid) {
       resolve({ success: false, error: verification.reason });
       return;
@@ -102,10 +134,10 @@ function runStitcherHeadless(exePath, rootFolder, tablets, onProgress) {
       args.push('--tablets', ...tablets);
     }
 
-    console.log(`Running stitcher: "${exePath}" ${args.join(' ')}`);
+    console.log(`Running stitcher: "${resolved}" ${args.join(' ')}`);
 
-    const proc = spawn(exePath, args, {
-      cwd: path.dirname(exePath),
+    const proc = spawn(resolved, args, {
+      cwd: path.dirname(resolved),
       env: { ...process.env },
     });
 
@@ -152,6 +184,7 @@ function runStitcherHeadless(exePath, rootFolder, tablets, onProgress) {
 }
 
 module.exports = {
+  resolveStitcherPath,
   loadStitcherConfig,
   saveStitcherConfig,
   verifyStitcherExe,

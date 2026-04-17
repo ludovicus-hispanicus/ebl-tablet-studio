@@ -33,6 +33,11 @@
         "from": "python",
         "to": "python",
         "filter": ["**/*", "!weights/**", "!__pycache__/**", "!*.pyc"]
+      },
+      {
+        "from": "resources/stitcher",
+        "to": "stitcher",
+        "filter": ["**/*"]
       }
     ],
     "win": {

@@ -6,6 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { resolveStitcherPath } = require('./stitcher-bridge');
 
 const APP_DATA_DIR = 'eBLImageProcessor';
 const PROJECTS_SUBDIR = 'projects';
@@ -18,11 +19,14 @@ function getUserProjectsDir() {
 }
 
 function getBuiltinProjectsDir(stitcherExePath) {
-  if (!stitcherExePath) return null;
+  const p = stitcherExePath || resolveStitcherPath();
+  if (!p) return null;
   // Built-in projects are in assets/projects/ next to the stitcher exe
-  const stitcherDir = path.dirname(stitcherExePath);
+  const stitcherDir = path.dirname(p);
   // For PyInstaller one-file: assets are extracted to a temp dir at runtime,
-  // but the built-in projects are also in the assets/ folder next to the exe
+  // so this returns null for the bundled stitcher. User projects still work.
+  // TODO(Phase B): add `process_tablets.py --list-projects` JSON subcommand so
+  // built-in projects can be queried from the running stitcher exe.
   const candidates = [
     path.join(stitcherDir, 'assets', 'projects'),
     path.join(stitcherDir, '..', 'assets', 'projects'), // macOS .app bundle
