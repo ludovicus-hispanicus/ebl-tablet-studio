@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const os = require('os');
+const { getUserDataDir } = require('./paths');
 
 const CONFIG_FILE = 'stitcher-config.json';
 
@@ -43,10 +43,7 @@ function resolveStitcherPath() {
 }
 
 function getConfigPath() {
-  const userData = process.env.APPDATA || path.join(os.homedir(), '.config');
-  const dir = path.join(userData, 'tablet-image-renamer');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, CONFIG_FILE);
+  return path.join(getUserDataDir(), CONFIG_FILE);
 }
 
 function loadStitcherConfig() {

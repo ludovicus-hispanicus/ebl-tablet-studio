@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const readline = require('readline');
+const { getUserDataDir } = require('./paths');
 
 let pythonProcess = null;
 let serverReady = false;
@@ -32,9 +33,7 @@ function getWeightsDir() {
     return devWeights;
   }
   // In production, use a writable user-data location
-  const userData = process.env.APPDATA
-    || (process.platform === 'darwin' ? path.join(os.homedir(), 'Library', 'Application Support') : path.join(os.homedir(), '.config'));
-  const weightsDir = path.join(userData, 'tablet-image-renamer', 'seg-weights');
+  const weightsDir = path.join(getUserDataDir(), 'seg-weights');
   fs.mkdirSync(weightsDir, { recursive: true });
   return weightsDir;
 }

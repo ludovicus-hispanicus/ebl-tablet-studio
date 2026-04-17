@@ -11,6 +11,7 @@ const {
 } = require('./stitcher-bridge');
 const projectManager = require('./project-manager');
 const segBridge = require('./segmentation-bridge');
+const { getUserDataDir, migrateLegacyUserData } = require('./paths');
 
 // Disable Sharp's file cache so that overwritten files are re-read fresh.
 // Without this, the segmentation apply/restore can show stale images because
@@ -24,11 +25,7 @@ try {
 // On the NEXT app startup, those histories are deleted and the list cleared.
 const os = require('os');
 function getSavedHistoriesFile() {
-  const userData = process.env.APPDATA
-    || (process.platform === 'darwin' ? path.join(os.homedir(), 'Library', 'Application Support') : path.join(os.homedir(), '.config'));
-  const dir = path.join(userData, 'tablet-image-renamer');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, 'saved-histories.json');
+  return path.join(getUserDataDir(), 'saved-histories.json');
 }
 
 function readSavedHistories() {
@@ -109,7 +106,17 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  // One-time migration from the pre-merge AppData layout
+  // (%APPDATA%/tablet-image-renamer/ → %APPDATA%/eBL Tablet Studio/).
+  // Idempotent and safe to run every launch.
+  try {
+    migrateLegacyUserData();
+  } catch (e) {
+    console.error('[migrate] unexpected error:', e.message);
+  }
+  createWindow();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
@@ -119,11 +126,7 @@ app.on('window-all-closed', () => {
 // Simple display name for the assignment/collaboration system.
 // Stored locally — no accounts, no passwords.
 function getUserFile() {
-  const userData = process.env.APPDATA
-    || (process.platform === 'darwin' ? path.join(os.homedir(), 'Library', 'Application Support') : path.join(os.homedir(), '.config'));
-  const dir = path.join(userData, 'tablet-image-renamer');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  return path.join(dir, 'user.json');
+  return path.join(getUserDataDir(), 'user.json');
 }
 
 ipcMain.handle('get-user-name', async () => {
