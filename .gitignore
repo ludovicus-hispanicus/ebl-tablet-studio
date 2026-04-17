@@ -29,6 +29,9 @@ resources/models/
 *.onnx
 *.pt
 
+# Spike / experiment outputs (generated artifacts, not source)
+experiments/
+
 # OS
 .DS_Store
 Thumbs.db
