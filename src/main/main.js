@@ -12,6 +12,7 @@ const {
 const projectManager = require('./project-manager');
 const segBridge = require('./segmentation-bridge');
 const { getUserDataDir, migrateLegacyUserData } = require('./paths');
+const { autoUpdater } = require('electron-updater');
 
 // Disable Sharp's file cache so that overwritten files are re-read fresh.
 // Without this, the segmentation apply/restore can show stale images because
@@ -106,6 +107,25 @@ function createWindow() {
   });
 }
 
+// Check the GitHub Releases of this repo for newer versions, download in the
+// background, notify via OS notification, install on next quit. Disabled in
+// dev mode (no packaged metadata) and gracefully no-ops if the update check
+// fails (e.g. offline, unsigned binary on macOS).
+function initAutoUpdater() {
+  if (!app.isPackaged) {
+    console.log('[auto-update] skipped in dev mode');
+    return;
+  }
+  autoUpdater.logger = console;
+  autoUpdater.on('error', (err) => console.error('[auto-update] error:', err.message));
+  autoUpdater.on('update-available', (info) => console.log('[auto-update] available:', info.version));
+  autoUpdater.on('update-not-available', () => console.log('[auto-update] up to date'));
+  autoUpdater.on('update-downloaded', (info) => console.log('[auto-update] downloaded:', info.version, '(install on quit)'));
+  autoUpdater.checkForUpdatesAndNotify().catch((err) => {
+    console.error('[auto-update] check failed:', err.message);
+  });
+}
+
 app.whenReady().then(() => {
   // One-time migration from the pre-merge AppData layout
   // (%APPDATA%/tablet-image-renamer/ → %APPDATA%/eBL Tablet Studio/).
@@ -116,6 +136,7 @@ app.whenReady().then(() => {
     console.error('[migrate] unexpected error:', e.message);
   }
   createWindow();
+  initAutoUpdater();
 });
 
 app.on('window-all-closed', () => {

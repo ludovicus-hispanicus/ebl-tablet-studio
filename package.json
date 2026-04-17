@@ -12,6 +12,7 @@
     "dist:dir": "electron-builder --win --dir"
   },
   "dependencies": {
+    "electron-updater": "^6.8.3",
     "exifr": "^7.1.3",
     "sharp": "^0.33.0"
   },
@@ -24,6 +25,11 @@
     "appId": "com.ebl.tablet-studio",
     "productName": "eBL Tablet Studio",
     "artifactName": "eBL_Tablet_Studio-${version}-${os}-${arch}.${ext}",
+    "publish": {
+      "provider": "github",
+      "owner": "ludovicus-hispanicus",
+      "repo": "ebl-tablet-studio"
+    },
     "files": [
       "src/**/*",
       "package.json"
@@ -32,12 +38,19 @@
       {
         "from": "python",
         "to": "python",
-        "filter": ["**/*", "!weights/**", "!__pycache__/**", "!*.pyc"]
+        "filter": [
+          "**/*",
+          "!weights/**",
+          "!__pycache__/**",
+          "!*.pyc"
+        ]
       },
       {
         "from": "resources/stitcher",
         "to": "stitcher",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
@@ -45,11 +58,15 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },
@@ -66,7 +83,9 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["arm64"]
+          "arch": [
+            "arm64"
+          ]
         }
       ],
       "category": "public.app-category.productivity",
@@ -74,7 +93,9 @@
     },
     "linux": {
       "icon": "assets/icons/icon.png",
-      "target": ["AppImage"]
+      "target": [
+        "AppImage"
+      ]
     }
   }
 }
