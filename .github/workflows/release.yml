@@ -18,6 +18,11 @@ env:
 
 jobs:
   build:
+    # Each OS builds with electron-builder, which (because build.publish is
+    # configured in package.json and GH_TOKEN is set) uploads artifacts AND
+    # the auto-update manifests (latest*.yml + .blockmap) directly into a
+    # single draft release on GitHub keyed by the pushed tag. All three
+    # matrix jobs land in the same draft.
     strategy:
       matrix:
         include:
@@ -81,7 +86,7 @@ jobs:
           mkdir -p resources/stitcher
           echo "Stitcher is not shipped on Linux (Phase A)." > resources/stitcher/README.txt
 
-      - name: Build
+      - name: Build and publish
         run: npm run ${{ matrix.script }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -96,7 +101,7 @@ jobs:
             fi
           done
 
-      - name: Upload artifacts
+      - name: Upload artifacts (CI debug copy)
         uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.os }}
@@ -105,26 +110,49 @@ jobs:
             dist/*.dmg
             dist/*.AppImage
             dist/*.blockmap
+            dist/latest*.yml
           if-no-files-found: ignore
 
-  release:
+  publish:
+    # Finalize the draft release electron-builder created during build.
+    # Uses the GitHub API directly — softprops/action-gh-release was creating
+    # a duplicate release that collided on finalize, so this job simply
+    # patches the existing draft to { draft: false, prerelease: contains(ref, '-') }.
     needs: build
     runs-on: ubuntu-latest
-
     steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
+      - name: Finalize release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
 
-      - name: List artifacts
-        run: find artifacts -type f 2>/dev/null || ls -R artifacts
+          # Find the draft release electron-builder created for this tag.
+          REL_ID=$(gh api "repos/$REPO/releases" \
+            --jq ".[] | select(.tag_name==\"$TAG\" and .draft==true) | .id" \
+            | head -1)
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/*
-          generate_release_notes: true
-          # Any tag with a hyphen (v1.2.3-beta.1, v1.2.3-rc.1, etc.) is a prerelease.
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          if [ -z "$REL_ID" ]; then
+            echo "No draft release found for $TAG — assuming already published."
+            gh release view "$TAG" --repo "$REPO" || true
+            exit 0
+          fi
+
+          # Tags containing a hyphen (v1.2.3-beta.1, v1.2.3-rc.1) = prerelease.
+          if [[ "$TAG" == *-* ]]; then
+            PRERELEASE=true
+          else
+            PRERELEASE=false
+          fi
+
+          echo "Finalizing release $REL_ID for tag $TAG (prerelease=$PRERELEASE)"
+          gh api -X PATCH "repos/$REPO/releases/$REL_ID" \
+            -F draft=false \
+            -F prerelease=$PRERELEASE \
+            -f name="$TAG" \
+            > /dev/null
+
+          echo "Published:"
+          gh release view "$TAG" --repo "$REPO"
