@@ -1,33 +1,30 @@
 """
 Tablet object extractor using MobileSAM via onnxruntime.
 
-Drop-in replacement for object_extractor_rembg.py:
-  - Same public function: extract_and_save_center_object(input_filepath, ...)
-  - Same return type: (output_filepath, dummy_contour)
-  - Same output convention: <input_base><output_filename_suffix>
+*** Not currently used. ***
 
-Semantic difference vs rembg:
-  - rembg produces a generic foreground mask, then stitcher picks the object
-    closest to the image center among the two largest connected components.
-    On off-center tablets (e.g. a tablet leaning against foam support), that
-    heuristic can silently pick the foam instead of the tablet, and because
-    the choice lives right at the ranking tiebreaker, tiny rembg/torch/onnx
-    version drift flips the selection unpredictably.
-  - SAM with a center-point prompt asks "what's the object touching this
-    point?" and returns exactly that object. The selection is deterministic
-    given the same inputs + same ONNX model. For off-center tablets the
-    center point can still land on the foam (same failure) — but it's now
-    predictable and a manual click in the Electron segmentation UI always
-    gives a clean override.
+Experimental module written during Phase B.5 as a candidate replacement
+for object_extractor_rembg.py. It produced worse results than rembg on
+thin-edge tablet views (top/bottom edge shots where the tablet is a
+narrow horizontal strip and a vertical foam support dominates the box).
+Root cause: SAM is a promptable segmentation model — you give it a
+point/box, it returns *that specific object*. rembg/U2NET is a salient
+object detection model — trained to emit *all foreground* in one pass.
+Different tools for different tasks.
 
-Runtime deps:
-  - onnxruntime (no torch, no rembg, no u2net at runtime)
-  - Pillow, opencv, numpy (already in use elsewhere)
+The stitcher's automatic extraction path stays on rembg/U2NET. SAM is
+used for interactive click-to-segment in the Electron UI (see the
+renamer's src/main/sam-onnx.js), where the user explicitly points at
+the tablet — the case SAM is actually trained for.
 
-The ONNX models live under repo-level resources/models/sam/. In dev this
-is resolved relative to this module's parent; under PyInstaller it's
-expected at sys._MEIPASS/models/sam/ (see .spec datas). Env var
-EBL_SAM_MODELS_DIR overrides both.
+This file is kept as-is for potential future work on SAM-based auto
+extraction (e.g. using SAM's output only to refine an initial U2NET
+mask, or training a tablet-specific SAM adapter).
+
+API (unused):
+  extract_and_save_center_object(input_filepath, ...) -> (output_path, dummy_contour)
+
+Runtime deps if re-enabled: onnxruntime, Pillow, opencv, numpy. No torch.
 """
 
 import os
@@ -130,11 +127,27 @@ def _preprocess(image_bgr):
     return tensor, (h, w), scale
 
 
-def _run_sam_center_point(image_bgr):
+def _run_sam_box(image_bgr, box_margin=0.1):
     """
-    Run SAM with a single positive point at the image center. Returns the
-    highest-IoU binary mask at the original image size as a uint8 HxW array
-    (0 or 255).
+    Prompt SAM with a large central box covering (1 - 2*box_margin) of the
+    image in each dimension (default 80%). SAM interprets a box prompt as
+    "find the main object inside this rectangle" — much more robust than a
+    single center point for off-center tablets.
+
+    Why not a point prompt:
+      - A point at (W/2, H/2) returns whatever SAM sees at that pixel.
+        When the tablet is leaning against a foam support, the center
+        often lands on foam; SAM returns foam.
+    Why not an "everything-mode" grid:
+      - Accumulating multiple prompt masks into a combined-foreground blob
+        tends to fill the frame because SAM's individual per-point masks
+        overlap unpredictably. Even with per-mask coverage filtering, the
+        OR of 16 masks quickly approaches "whole image."
+    Box prompt:
+      - Single decoder call, deterministic output, tight around the main
+        object. Returns the 3 multimask candidates; we pick highest IoU.
+
+    Returns: binary mask (uint8, HxW, 0 or 255) at original image resolution.
     """
     encoder, decoder = _get_sessions()
 
@@ -142,10 +155,17 @@ def _run_sam_center_point(image_bgr):
     tensor, (orig_h, orig_w), scale = _preprocess(image_bgr)
     embeddings = encoder.run(None, {"images": tensor})[0]
 
-    # Center point, transformed into the 1024 input space.
-    cx, cy = w / 2.0, h / 2.0
-    coords = np.array([[[cx * scale, cy * scale], [0.0, 0.0]]], dtype=np.float32)
-    labels = np.array([[1.0, -1.0]], dtype=np.float32)  # 1 = positive, -1 = sentinel
+    # Box corners in original image coords, scaled to 1024 input space.
+    x1 = box_margin * w
+    y1 = box_margin * h
+    x2 = (1.0 - box_margin) * w
+    y2 = (1.0 - box_margin) * h
+
+    # SAM box prompt = two points with labels 2 (top-left) and 3 (bottom-right).
+    coords = np.array(
+        [[[x1 * scale, y1 * scale], [x2 * scale, y2 * scale]]], dtype=np.float32
+    )
+    labels = np.array([[2.0, 3.0]], dtype=np.float32)
 
     feeds = {
         "image_embeddings": embeddings,
@@ -156,10 +176,11 @@ def _run_sam_center_point(image_bgr):
         "orig_im_size": np.array([orig_h, orig_w], dtype=np.float32),
     }
     outputs = decoder.run(None, feeds)
-    masks = outputs[0]  # (1, N, H, W) logits at original size
-    ious = outputs[1]   # (1, N) predicted IoU per candidate
+    masks = outputs[0]  # (1, N, H, W)
+    ious = outputs[1]   # (1, N)
 
     best = int(np.argmax(ious[0]))
+    print(f"    SAM box prompt → IoU {float(ious[0, best]):.3f}")
     return (masks[0, best] > 0).astype(np.uint8) * 255
 
 
@@ -212,22 +233,25 @@ def extract_and_save_center_object(
             f"Could not load image for object extraction: {input_image_filepath} - {e}"
         )
 
-    # Run SAM → binary mask at original image size.
-    binary_mask = _run_sam_center_point(img_bgr)
+    # Box prompt covering 80% of the image, centered. Tells SAM "find the
+    # main object inside this rectangle" — robust to off-center tablets
+    # (the box still contains them) and avoids the foam-at-center failure
+    # mode of single-point prompts.
+    binary_mask = _run_sam_box(img_bgr)
 
-    # Light morphological clean: bridge 1-pixel gaps so the largest CC
-    # doesn't get artificially split.
-    kernel = np.ones((3, 3), np.uint8)
+    # Light morphological close: bridge 1-pixel gaps between adjacent masks
+    # from neighboring grid points so the tablet stays a single component.
+    kernel = np.ones((5, 5), np.uint8)
     binary_mask = cv2.morphologyEx(binary_mask, cv2.MORPH_CLOSE, kernel)
 
-    # Connected-component analysis, same shape as rembg module.
+    # Connected-component analysis across the combined foreground mask.
     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
         binary_mask, connectivity=8
     )
 
     h, w = binary_mask.shape[:2]
     if num_labels <= 1:
-        print("    Warning: SAM mask was empty!")
+        print("    Warning: SAM coverage mask was empty!")
         selected_object_mask = binary_mask
         bbox = (0, 0, w, h)
     else:
@@ -242,18 +266,37 @@ def extract_and_save_center_object(
             obj_data.append((i, int(area), distance_to_center))
 
         obj_data.sort(key=lambda x: x[1], reverse=True)
-        largest_objects = obj_data[: min(2, len(obj_data))]
-        print(f"    SAM produced {num_labels - 1} connected component(s)")
+        print(f"    SAM coverage → {num_labels - 1} connected component(s)")
 
-        if len(largest_objects) == 1:
-            selected_label = largest_objects[0][0]
-            print("    Only one component found - using it")
-        elif largest_objects[0][2] <= largest_objects[1][2]:
-            selected_label = largest_objects[0][0]
-            print("    Two largest components found - selecting the one closer to center")
+        # Heuristic (improved over rembg's):
+        #   - Prefer the larger object.
+        #   - Use distance-to-center only as a tiebreaker when the second-
+        #     largest is within 30% of the largest's area.
+        # Rationale: rembg's "closer of top-two" picked the foam on off-
+        # center tablets because foam was smaller but more centered. Tablets
+        # are almost always the dominant object by area; weighting size
+        # over position picks the tablet even when foam is near center.
+        if len(obj_data) == 1:
+            selected_label = obj_data[0][0]
+            print("    Only one component found — using it")
         else:
-            selected_label = largest_objects[1][0]
-            print("    Two largest components found - selecting the one closer to center")
+            largest, second = obj_data[0], obj_data[1]
+            area_ratio = second[1] / largest[1] if largest[1] else 0
+            if area_ratio < 0.7:
+                # Largest clearly dominates → pick it.
+                selected_label = largest[0]
+                print(
+                    f"    Largest ({largest[1]} px) dominates over second "
+                    f"({second[1]} px, {area_ratio:.0%}) — picking largest"
+                )
+            elif largest[2] <= second[2]:
+                # Close sizes; largest is closer to center.
+                selected_label = largest[0]
+                print("    Similar sizes — picking closer to center (largest)")
+            else:
+                # Close sizes; second is closer to center.
+                selected_label = second[0]
+                print("    Similar sizes — picking closer to center (second)")
 
         selected_object_mask = np.zeros_like(binary_mask)
         selected_object_mask[labels == selected_label] = 255

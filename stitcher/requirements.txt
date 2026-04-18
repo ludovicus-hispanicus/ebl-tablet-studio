@@ -18,12 +18,12 @@ cssselect2>=0.4.0
 defusedxml>=0.7.0
 webencodings>=0.5.0
 
-# Background Removal (rembg functionality)
+# Background Removal (rembg + U2NET via onnxruntime).
+# Torch + torchvision are NOT required: the PyInstaller spec already
+# excludes them, and rembg uses onnxruntime as its inference backend for
+# the u2net model. Interactive SAM segmentation lives on the Electron
+# side via onnxruntime-node, not in this Python bundle.
 rembg>=2.0.0
-torch>=1.9.0
-torchvision>=0.10.0
-
-# Machine Learning Models (for rembg)
 onnxruntime>=1.8.0
 
 # Image Processing Libraries

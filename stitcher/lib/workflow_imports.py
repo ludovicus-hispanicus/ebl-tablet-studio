@@ -16,10 +16,14 @@ try:
         MAX_ADDITIONAL_INTERMEDIATES,
         get_extended_intermediate_suffixes
     )
-    # Phase B.5: tablet extraction runs on SAM via onnxruntime, not rembg/U2NET.
-    # The symbol stays named extract_and_save_center_object so the rest of the
-    # workflow imports and calls it unchanged.
-    from object_extractor_sam import extract_and_save_center_object
+    # Automatic tablet extraction uses rembg + U2NET (via onnxruntime).
+    # SAM was evaluated here in Phase B.5 but reverted: SAM is a promptable
+    # model and produces unpredictable mask choices on edge-view frames
+    # where the tablet isn't the dominant object. U2NET is a salient-object-
+    # detection model — right tool for this job. SAM stays in the Electron
+    # UI for interactive click-to-segment; see lib/object_extractor_sam.py
+    # which is kept on disk as a starting point if we revisit auto-SAM later.
+    from object_extractor_rembg import extract_and_save_center_object
     from object_extractor import extract_specific_contour_to_image_array, DEFAULT_BACKGROUND_DETECTION_COLOR_TOLERANCE
     from remove_background import (
         create_foreground_mask_from_background as create_foreground_mask,

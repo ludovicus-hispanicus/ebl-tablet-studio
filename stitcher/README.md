@@ -4,32 +4,44 @@ Python backend for tablet image stitching, vendored from [`ebl-photo-stitcher`](
 
 ## Status
 
-**Step 5 of 7 complete — rembg → SAM swap done and validated.** The app still ships the downloaded standalone stitcher binary; the vendored source here now uses SAM ONNX for tablet extraction and is proven to produce outputs within acceptable variance of v2.0-rc.16. Next: delete the rembg module and drop its deps (step 6), then build + ship (steps 3→4 in the original plan, renumbered as 7 after the reorder).
+**Hybrid architecture decided.** Automatic tablet extraction stays on **rembg + U2NET** (via onnxruntime). Interactive SAM segmentation continues to live in the Electron UI (`src/main/sam-onnx.js` in the renamer). Torch + torchvision + mobile-sam pip dropped from `requirements.txt` since nothing uses them at runtime anymore.
 
-### Step 5 validation (2026-04-18, SAM ONNX replaces rembg/U2NET)
+Phase B effective plan after the decision:
+1. ✅ Source vendored (step 1)
+2. ✅ Validated against v2.0-rc.16 (step 2, Si.49 TIFF byte-identical)
+3. ⬜ Build with PyInstaller locally, drop into `resources/stitcher/` (step 3)
+4. ⬜ CI builds from vendored source (step 4)
+5. ❌ ~~Swap rembg → SAM~~ — **reverted**. SAM is a promptable model; U2NET is the right tool for salient-object auto-extraction. See Step 5 post-mortem below.
+6. ⬜ Delete `lib/gui_workflow_runner.py`'s tkinter bits and rename → `workflow_runner.py` (step 6)
+7. ⬜ Archive old `ebl-photo-stitcher` repo (step 7)
 
-Ran the vendored code with the new SAM extractor on Si.32, Si.49, Si.58, Si.77. Comparison to v2.0-rc.16 rembg baseline:
+### Step 5 post-mortem — why rembg stayed
 
-| Tablet | Baseline canvas | SAM canvas | ΔW × ΔH | TIFF delta |
-|---|---|---|---|---|
-| Si.32 | 9270×12375 | 9162×12265 | -108 × -110 | -2.0% |
-| Si.49 | 7274×7787 | 7190×7691 | -84 × -96 | -2.4% |
-| Si.58 | 6095×15685 | 6003×14919 | -92 × -766 | -6.3% |
-| Si.77 | 9427×11706 | 9686×11655 | +259 × -51 | +2.3% |
+Swapped `object_extractor_rembg.py` for a SAM ONNX implementation, tested on Si.32 / Si.49 / Si.58 / Si.77, and backed out.
 
-All within 6% — normal extraction-boundary variance. Notably: **Si.77 no longer suffers the 1354-pixel catastrophic failure** from the pre-SAM run where rembg's "largest near center" heuristic picked a foam support instead of the off-center tablet. SAM with a center-point prompt produces deterministic extraction; the tablet wins cleanly on Si.77_06 (baseline 1721×5779 → SAM 2179×5858, a modest +458 px width from SAM's looser boundary vs the old rembg + tight crop).
+**What worked:** Si.32 and Si.49 canvases within ~2% of baseline. Single-center-point SAM produced deterministic output. EXIF orientation was tricky (fixed with `ImageOps.exif_transpose`).
 
-### Fix applied during Step 5
+**What failed:** thin-edge tablet views where the tablet is a narrow horizontal strip against a tall foam support. SAM variants tried:
+- **Center-point prompt:** if center lands on foam, SAM returns foam. Si.77 catastrophically picked foam on several views even when dimensions coincidentally matched rembg-baseline sizes.
+- **4×4 grid of points (16 masks OR-ed):** produced "whole image" masks because accumulated foreground exceeded max-coverage filters. Canvases blew out to 4000×6000 (full image).
+- **80% box prompt:** Si.58_03 and Si.58_04 top/bottom edge views — SAM's 4 multimask outputs never included the thin-tablet-strip shape. SAM consistently preferred the vertical foam support (higher IoU confidence) regardless of which output was chosen.
 
-**EXIF orientation.** The Si.49 test corpus JPEGs have `Orientation=8` (photographer shot in portrait, sensor wrote landscape pixels + EXIF tag saying "rotate 90 CW for display"). rembg's pipeline implicitly respected the tag; my first SAM pass read the raw pixels and produced a 90°-rotated mask, which blew canvas dimensions out by ~4× area.
+**Why no amount of prompt tuning fixes this:** SAM is *promptable segmentation* (segment the object at this prompt). U2NET is *salient object detection* (emit all foreground). They solve different problems. Making SAM bigger (SAM 2 base+ / large / HQ-SAM) produces sharper boundaries but the same wrong object — a cleaner answer to the wrong question.
 
-Fix: `ImageOps.exif_transpose(Image.open(...))` at the top of the SAM extractor, so the ONNX model sees the same oriented pixels rembg did. Applied universally (TIFFs from RAW conversion have orientation=1, so it's a no-op for those).
+**Conclusion:** use each model for its trained purpose.
 
-### Architecture after Step 5
+### Architecture
 
-- `lib/object_extractor_sam.py` — new, ONNX-only, center-point prompt + "largest near center" postprocess as a safety net when SAM returns multi-component masks.
-- `lib/object_extractor_rembg.py` — still in the repo as a reference/rollback, **no longer imported by anything**. Will be deleted in step 6 along with the rembg/torch deps.
-- `lib/workflow_imports.py` + `lib/workflow_object_processing.py` — redirect both rembg-mode imports to `object_extractor_sam`. The mode name `'rembg'` stays in the call sites for config back-compat.
+- `lib/object_extractor_rembg.py` — active. Automatic extraction. rembg calls u2net via onnxruntime, as v2.0-rc.16 did.
+- `lib/object_extractor_sam.py` — kept on disk, not imported. Has the ONNX-only SAM extractor we wrote in step 5 with the EXIF fix. Starting point if we ever want to revisit SAM-for-auto (e.g. SAM refining an initial U2NET mask).
+- `lib/object_extractor.py` — contour-based legacy path. Unchanged.
+- Electron `src/main/sam-onnx.js` (in the renamer) — interactive manual SAM via onnxruntime-node. Unchanged, works.
+
+### Dependencies
+
+- Kept: `rembg`, `onnxruntime`, `opencv-python`, `pyexiv2`, `rawpy`, `Pillow`, `numpy`, `scikit-image`, `scipy`, `cairosvg`, `pandas`, `openpyxl`, etc.
+- Dropped: `torch`, `torchvision` (PyInstaller already excluded them; now also gone from requirements.txt).
+- Not added: `mobile-sam` pip package (we use the ONNX export, not the PyTorch model).
 
 ### Earlier status
 
