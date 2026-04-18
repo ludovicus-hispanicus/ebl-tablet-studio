@@ -4,7 +4,37 @@ Python backend for tablet image stitching, vendored from [`ebl-photo-stitcher`](
 
 ## Status
 
-**Step 2 of 7 complete — source vendored and validated to run.** The app still ships the downloaded standalone stitcher binary. The code here is source-of-record, proven to reproduce v2.0-rc.16 behavior, but not yet wired into the shipped installer.
+**Step 5 of 7 complete — rembg → SAM swap done and validated.** The app still ships the downloaded standalone stitcher binary; the vendored source here now uses SAM ONNX for tablet extraction and is proven to produce outputs within acceptable variance of v2.0-rc.16. Next: delete the rembg module and drop its deps (step 6), then build + ship (steps 3→4 in the original plan, renumbered as 7 after the reorder).
+
+### Step 5 validation (2026-04-18, SAM ONNX replaces rembg/U2NET)
+
+Ran the vendored code with the new SAM extractor on Si.32, Si.49, Si.58, Si.77. Comparison to v2.0-rc.16 rembg baseline:
+
+| Tablet | Baseline canvas | SAM canvas | ΔW × ΔH | TIFF delta |
+|---|---|---|---|---|
+| Si.32 | 9270×12375 | 9162×12265 | -108 × -110 | -2.0% |
+| Si.49 | 7274×7787 | 7190×7691 | -84 × -96 | -2.4% |
+| Si.58 | 6095×15685 | 6003×14919 | -92 × -766 | -6.3% |
+| Si.77 | 9427×11706 | 9686×11655 | +259 × -51 | +2.3% |
+
+All within 6% — normal extraction-boundary variance. Notably: **Si.77 no longer suffers the 1354-pixel catastrophic failure** from the pre-SAM run where rembg's "largest near center" heuristic picked a foam support instead of the off-center tablet. SAM with a center-point prompt produces deterministic extraction; the tablet wins cleanly on Si.77_06 (baseline 1721×5779 → SAM 2179×5858, a modest +458 px width from SAM's looser boundary vs the old rembg + tight crop).
+
+### Fix applied during Step 5
+
+**EXIF orientation.** The Si.49 test corpus JPEGs have `Orientation=8` (photographer shot in portrait, sensor wrote landscape pixels + EXIF tag saying "rotate 90 CW for display"). rembg's pipeline implicitly respected the tag; my first SAM pass read the raw pixels and produced a 90°-rotated mask, which blew canvas dimensions out by ~4× area.
+
+Fix: `ImageOps.exif_transpose(Image.open(...))` at the top of the SAM extractor, so the ONNX model sees the same oriented pixels rembg did. Applied universally (TIFFs from RAW conversion have orientation=1, so it's a no-op for those).
+
+### Architecture after Step 5
+
+- `lib/object_extractor_sam.py` — new, ONNX-only, center-point prompt + "largest near center" postprocess as a safety net when SAM returns multi-component masks.
+- `lib/object_extractor_rembg.py` — still in the repo as a reference/rollback, **no longer imported by anything**. Will be deleted in step 6 along with the rembg/torch deps.
+- `lib/workflow_imports.py` + `lib/workflow_object_processing.py` — redirect both rembg-mode imports to `object_extractor_sam`. The mode name `'rembg'` stays in the call sites for config back-compat.
+
+### Earlier status
+
+- Step 2 (2026-04-18): vendored source validated against v2.0-rc.16. Si.49 TIFF byte-identical; Si.32 3-pixel rembg noise.
+- Step 1 (2026-04-18): source imported from `ebl-photo-stitcher @ v2.0-rc.16`, Tkinter GUI files excluded, measurements decoupled.
 
 ### Validation results (2026-04-18)
 

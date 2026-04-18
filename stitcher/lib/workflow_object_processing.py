@@ -38,8 +38,12 @@ def extract_object_and_detect_background(path_ruler_extract_img, object_extracti
     output_bg_color = get_museum_background_color(
         museum_selection=museum_selection, detected_bg_color=detected_bg_color_from_image)
 
+    # Phase B.5: the 'rembg' mode name is preserved for config back-compat
+    # but the implementation is now SAM via onnxruntime. Legacy contour-based
+    # extraction (for very different inputs) is still available under any
+    # other mode string.
     if object_extraction_bg_mode == 'rembg':
-        from object_extractor_rembg import extract_and_save_center_object
+        from object_extractor_sam import extract_and_save_center_object
     else:
         from object_extractor import extract_and_save_center_object
         

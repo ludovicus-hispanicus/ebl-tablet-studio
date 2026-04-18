@@ -16,7 +16,10 @@ try:
         MAX_ADDITIONAL_INTERMEDIATES,
         get_extended_intermediate_suffixes
     )
-    from object_extractor_rembg import extract_and_save_center_object
+    # Phase B.5: tablet extraction runs on SAM via onnxruntime, not rembg/U2NET.
+    # The symbol stays named extract_and_save_center_object so the rest of the
+    # workflow imports and calls it unchanged.
+    from object_extractor_sam import extract_and_save_center_object
     from object_extractor import extract_specific_contour_to_image_array, DEFAULT_BACKGROUND_DETECTION_COLOR_TOLERANCE
     from remove_background import (
         create_foreground_mask_from_background as create_foreground_mask,
