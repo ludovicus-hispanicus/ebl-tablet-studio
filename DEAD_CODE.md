@@ -4,6 +4,10 @@ Audit from 2026-04-18. Items below are confirmed unused (zero importers, zero ca
 
 Already removed:
 - [x] `stitcher/lib/version_checker.py` — old standalone-stitcher auto-update checker. Wrong repo URL, stale `CURRENT_VERSION = "v1.0"`, dead tkinter imports, no callers. Superseded by `electron-updater` wired into the Electron main process (`src/main/main.js::initAutoUpdater`). Deleted 2026-04-18.
+- [x] `seg-start-server` / `segStartServer` / `startSegServerIfNeeded()` — explicit "start segmentation server" step. Removed after SAM moved in-process via onnxruntime-node; sessions now preload during the splash so segmentation is ready before the user can click. Removed 2026-04-18.
+- [x] `seg-stop-server` / `segStopServer` — orphan IPC API (the bridge's `stopServer()` is still called internally on `before-quit`). Removed 2026-04-18.
+- [x] `seg-server-status` / `segServerStatus` — orphan status ping, no caller. Removed 2026-04-18.
+- [x] `seg-progress` / `onSegProgress` / `offSegProgress` — no subprocess to stream progress from; obsolete. Removed 2026-04-18.
 
 ## Candidates — Python (stitcher/)
 
@@ -25,12 +29,9 @@ Removing them means deleting both the handler and the preload line.
 - [ ] **`selectStitcherExe`** — same leftover.
 - [ ] **`deleteProject`** — defined but no Settings UI exposes it.
 - [ ] **`newProject`** — defined but no Settings UI exposes it.
-- [ ] **`segServerStatus`** — SAM now runs in-process (onnxruntime-node); a "status" ping has no meaning.
-- [ ] **`segStopServer`** — same rationale; there's no separate server to stop.
-- [ ] **`onSegProgress` / `offSegProgress`** — no caller.
 - [ ] **`onStitcherProgress` / `offStitcherProgress`** — off/on pair, neither is called.
 
-Total: ~100 lines across main.js + preload.js.
+Total: ~30 lines across main.js + preload.js (the seg-* APIs on this list were removed 2026-04-18 alongside the SAM-preload-at-splash refactor).
 
 ## Candidates — HTML DOM
 

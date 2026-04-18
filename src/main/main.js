@@ -187,7 +187,7 @@ if (!gotSingleInstanceLock) {
     }
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     createSplash();
 
     // One-time migration from the pre-merge AppData layout
@@ -198,6 +198,26 @@ if (!gotSingleInstanceLock) {
       migrateLegacyUserData();
     } catch (e) {
       console.error('[migrate] unexpected error:', e.message);
+    }
+
+    // Preload SAM ONNX sessions at startup so segmentation feels instant
+    // once the app is ready. Cold load is ~4s; absorbing it into the splash
+    // is nicer than making the user wait on their first click-to-segment.
+    // If it fails (e.g. missing model file), log and keep going — the rest
+    // of the app still works, and sam.init() will retry lazily on first use.
+    splashStatus('Loading segmentation model\u2026');
+    try {
+      const segResult = await segBridge.startServer((evt) => {
+        if (evt && evt.message) splashStatus(evt.message);
+      });
+      if (segResult && segResult.success) {
+        splashStatus('Segmentation ready');
+      } else if (segResult && segResult.error) {
+        console.error('[seg] preload failed:', segResult.error);
+        splashStatus(`Segmentation unavailable: ${segResult.error}`);
+      }
+    } catch (e) {
+      console.error('[seg] preload unexpected error:', e.message);
     }
 
     splashStatus('Loading interface\u2026');
@@ -598,19 +618,9 @@ ipcMain.handle('get-full-image', async (event, imagePath) => {
 });
 
 // === Segmentation Bridge ===
-
-ipcMain.handle('seg-start-server', async () => {
-  return segBridge.startServer((progress) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('seg-progress', progress);
-    }
-  });
-});
-
-ipcMain.handle('seg-stop-server', async () => {
-  segBridge.stopServer();
-  return { success: true };
-});
+// SAM ONNX sessions are preloaded during the splash screen in the
+// app.whenReady block above — there's no explicit "start server" step.
+// encode() / predict() will lazy-init as a safety net if the preload failed.
 
 ipcMain.handle('seg-encode-image', async (event, imagePath) => {
   return segBridge.encodeImage(imagePath);
@@ -891,11 +901,8 @@ ipcMain.handle('seg-apply-mask', async (event, imagePath, outputPath, maskBase64
   }
 });
 
-ipcMain.handle('seg-server-status', async () => {
-  return { ready: segBridge.isServerReady() };
-});
-
-// Clean up Python process on quit
+// Dispose the SAM ONNX sessions on quit. (There's no subprocess to kill;
+// this just releases the onnxruntime-node sessions and frees memory.)
 app.on('before-quit', () => {
   segBridge.stopServer();
 });

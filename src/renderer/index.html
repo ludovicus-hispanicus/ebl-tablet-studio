@@ -294,22 +294,14 @@
       <!-- Results Tab -->
       <div id="tab-results" class="tab-content">
         <div id="results-container">
-          <div id="results-empty">
-            <p>No results yet.</p>
-            <p class="results-hint">Process tablets in the stitcher to see results here.</p>
-          </div>
-          <div id="results-info" class="hidden">
+          <div id="result-header">
             <div id="result-summary"></div>
-            <div id="result-actions">
-              <button id="btn-reprocess-updated" class="btn-reprocess">Reprocess Updated</button>
-              <button id="btn-reprocess-all" class="btn-reprocess-secondary">Reprocess All</button>
-            </div>
-            <div id="stitcher-status" class="hidden"></div>
-            <div id="result-notes-container">
-              <textarea id="result-notes" placeholder="Add notes..." rows="8"></textarea>
-              <button id="result-save-notes">Save Notes</button>
-            </div>
+            <button id="btn-reprocess-all" class="btn-reprocess-secondary">Reprocess All</button>
           </div>
+          <div id="result-notes-container">
+            <textarea id="result-notes" placeholder="Add notes..." rows="6"></textarea>
+          </div>
+          <div id="stitcher-status" class="hidden"></div>
         </div>
       </div><!-- end tab-results -->
     </section>

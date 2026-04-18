@@ -219,9 +219,14 @@ function restoreThumbnailsForSelection() {
 }
 
 // Results tab controls
-document.getElementById('result-save-notes').addEventListener('click', saveCurrentNotes);
-document.getElementById('btn-reprocess-updated').addEventListener('click', reprocessUpdated);
 document.getElementById('btn-reprocess-all').addEventListener('click', reprocessAll);
+
+// Auto-save notes ~500ms after the user stops typing.
+let notesSaveTimer = null;
+document.getElementById('result-notes').addEventListener('input', () => {
+  clearTimeout(notesSaveTimer);
+  notesSaveTimer = setTimeout(saveCurrentNotes, 500);
+});
 
 // Settings dialog
 document.getElementById('btn-settings').addEventListener('click', openSettings);
@@ -1528,18 +1533,6 @@ async function loadResults() {
 }
 
 function updateResultsTab() {
-  const emptyEl = document.getElementById('results-empty');
-  const infoEl = document.getElementById('results-info');
-
-  if (!resultsState.hasResults || resultsState.results.length === 0) {
-    emptyEl.classList.remove('hidden');
-    infoEl.classList.add('hidden');
-    return;
-  }
-
-  emptyEl.classList.add('hidden');
-  infoEl.classList.remove('hidden');
-
   updateResultSummary();
 
   // If results tab is active, show result thumbnails in left panel
@@ -2142,27 +2135,6 @@ async function onProcessReady() {
   await runStitcher(ready);
 }
 
-async function reprocessUpdated() {
-  if (isStitcherRunning) {
-    alert('Stitcher is already running.');
-    return;
-  }
-
-  const updated = Object.entries(resultsState.reviewStatus)
-    .filter(([, v]) => v.status === 'updated' && isMyTablet(v))
-    .map(([name]) => name);
-
-  if (updated.length === 0) {
-    alert('No tablets assigned to you are marked as updated (green).');
-    return;
-  }
-
-  const ok = confirm(`Reprocess ${updated.length} updated tablet(s)?\n\n${updated.join('\n')}`);
-  if (!ok) return;
-
-  await runStitcher(updated);
-}
-
 async function reprocessAll() {
   if (isStitcherRunning) {
     alert('Stitcher is already running.');
@@ -2193,8 +2165,9 @@ async function runStitcher(tablets) {
   const rootFolder = appMode === 'renamer' ? exportBase : state.rootFolder;
 
   isStitcherRunning = true;
-  document.getElementById('btn-reprocess-updated').disabled = true;
   document.getElementById('btn-reprocess-all').disabled = true;
+
+  document.querySelector('.right-tab[data-tab="results"]')?.click();
 
   const statusEl = document.getElementById('stitcher-status');
   statusEl.classList.remove('hidden');
@@ -2218,7 +2191,6 @@ async function runStitcher(tablets) {
   const result = await window.api.processTablets(rootFolder, tablets);
 
   isStitcherRunning = false;
-  document.getElementById('btn-reprocess-updated').disabled = false;
   document.getElementById('btn-reprocess-all').disabled = false;
 
   // Mark all sent tablets as 'sent' (yellow) so user knows to review them
@@ -2622,8 +2594,6 @@ const segTool = {
   bgColor: 'white',
   maskOpacity: 0.5,
 
-  // Server state
-  serverReady: false,
   imageEncoded: false,
   encodedImagePath: null,
   imageWidth: 0,            // actual original image dimensions (from SAM encode)
@@ -2730,8 +2700,6 @@ function activateSegTool() {
   updateSegStatus('Draw a box. Shift+draw to add, Alt+draw to subtract.');
   updateSegActionButtons();
   refreshSegHistory();
-
-  startSegServerIfNeeded();
 }
 
 // Reload the history list for the current viewer image
@@ -3195,39 +3163,16 @@ function segClear() {
   updateSegStatus('Draw a box. Shift+draw to add, Alt+draw to subtract.');
 }
 
-// --- Backend communication (stubs until Phase 2-3 wired) ---
-
-async function startSegServerIfNeeded() {
-  if (segTool.serverReady) return;
-  updateSegStatus('Starting segmentation server...');
-
-  try {
-    const result = await window.api.segStartServer();
-    if (result && result.success) {
-      segTool.serverReady = true;
-      updateSegStatus('Server ready. Draw a rectangle around the tablet.');
-    } else {
-      updateSegStatus(`Server error: ${result?.error || 'unknown'}`);
-    }
-  } catch (err) {
-    updateSegStatus(`Server not available: ${err.message}`);
-    segTool.serverReady = false;
-  }
-}
+// --- Backend communication ---
+// SAM ONNX sessions are preloaded at app startup during the splash screen
+// (see src/main/main.js app.whenReady). By the time the user can interact
+// with the UI, segmentation is already ready. sam.init() in sam-onnx.js
+// is idempotent and will lazy-init on first encode() as a safety net if
+// preload ever failed.
 
 async function requestSegEncode() {
   if (!viewerCurrentPath) return;
   if (segTool.encodedImagePath === viewerCurrentPath) return;
-
-  // Ensure server is running before making HTTP calls
-  if (!segTool.serverReady) {
-    updateSegStatus('Waiting for segmentation server...');
-    await startSegServerIfNeeded();
-    if (!segTool.serverReady) {
-      updateSegStatus('Server not available. Check Python installation.');
-      return;
-    }
-  }
 
   previewTool.busy = true;
   updateSegStatus('Encoding image (this takes a few seconds)...');

@@ -47,17 +47,12 @@ contextBridge.exposeInMainWorld('api', {
   rotateImagesBatch: (paths, degrees) => ipcRenderer.invoke('rotate-images-batch', paths, degrees),
   deleteImage: (path) => ipcRenderer.invoke('delete-image', path),
 
-  // Segmentation
-  segStartServer: () => ipcRenderer.invoke('seg-start-server'),
-  segStopServer: () => ipcRenderer.invoke('seg-stop-server'),
+  // Segmentation (SAM ONNX preloaded at app startup — no explicit start step)
   segEncodeImage: (imagePath) => ipcRenderer.invoke('seg-encode-image', imagePath),
   segPredictMask: (box, posPoints, negPoints) => ipcRenderer.invoke('seg-predict-mask', box, posPoints, negPoints),
   segApplyMask: (imagePath, outputPath, maskBase64, bgColor, rotation) => ipcRenderer.invoke('seg-apply-mask', imagePath, outputPath, maskBase64, bgColor, rotation),
-  segServerStatus: () => ipcRenderer.invoke('seg-server-status'),
   segGetHistory: (imagePath) => ipcRenderer.invoke('seg-get-history', imagePath),
   segJumpToStep: (imagePath, step) => ipcRenderer.invoke('seg-jump-to-step', imagePath, step),
   segMarkSaved: (imagePath) => ipcRenderer.invoke('seg-mark-saved', imagePath),
   segIsSaved: (imagePath) => ipcRenderer.invoke('seg-is-saved', imagePath),
-  onSegProgress: (callback) => ipcRenderer.on('seg-progress', (event, data) => callback(data)),
-  offSegProgress: () => ipcRenderer.removeAllListeners('seg-progress'),
 });
