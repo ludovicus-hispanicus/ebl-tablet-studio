@@ -1,0 +1,16 @@
+{
+  "name": "eBL Ruler (CBS)",
+  "builtin": true,
+  "background_color": [255, 255, 255],
+  "ruler_mode": "single",
+  "ruler_file": "General_eBL_photo_ruler.svg",
+  "ruler_size_cm": 4.317,
+  "detection_method": "general",
+  "ruler_position_locked": false,
+  "fixed_ruler_position": "top",
+  "institution": "",
+  "credit_line": "",
+  "logo_enabled": false,
+  "logo_path": "",
+  "measurements_file": ""
+}

@@ -1,0 +1,16 @@
+{
+  "name": "Non-eBL Ruler (VAM)",
+  "builtin": true,
+  "background_color": [255, 255, 255],
+  "ruler_mode": "single",
+  "ruler_file": "General_External_photo_ruler.svg",
+  "ruler_size_cm": 3.248,
+  "detection_method": "general",
+  "ruler_position_locked": false,
+  "fixed_ruler_position": "top",
+  "institution": "Staatliche Museen zu Berlin, Vorderasiatisches Museum",
+  "credit_line": "",
+  "logo_enabled": false,
+  "logo_path": "",
+  "measurements_file": ""
+}

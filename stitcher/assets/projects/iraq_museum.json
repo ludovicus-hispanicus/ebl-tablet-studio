@@ -1,0 +1,16 @@
+{
+  "name": "Iraq Museum",
+  "builtin": true,
+  "background_color": [255, 255, 255],
+  "ruler_mode": "single",
+  "ruler_file": "IM_photo_ruler.svg",
+  "ruler_size_cm": 4.599,
+  "detection_method": "iraq_museum",
+  "ruler_position_locked": true,
+  "fixed_ruler_position": "bottom-left-fixed",
+  "institution": "The Iraq Museum \u2013 eBL Project",
+  "credit_line": "Cuneiform Artefacts of Iraq in Context (CAIC), Bayerische Akademie der Wissenschaften",
+  "logo_enabled": false,
+  "logo_path": "",
+  "measurements_file": ""
+}

@@ -1,0 +1,16 @@
+{
+  "name": "Iraq Museum (Sippar Library)",
+  "builtin": true,
+  "background_color": [255, 255, 255],
+  "ruler_mode": "single",
+  "ruler_file": "Sippar_Library_Ruler.svg",
+  "ruler_size_cm": 3.886,
+  "detection_method": "iraq_museum",
+  "ruler_position_locked": true,
+  "fixed_ruler_position": "bottom-left-fixed",
+  "institution": "University of Baghdad",
+  "credit_line": "College of Arts, University of Baghdad",
+  "logo_enabled": false,
+  "logo_path": "",
+  "measurements_file": ""
+}

@@ -1,0 +1,24 @@
+{
+  "name": "Black background (Jena)",
+  "builtin": true,
+  "background_color": [0, 0, 0],
+  "ruler_mode": "adaptive_set",
+  "ruler_files": {
+    "1cm": "Black_1cm_scale.tif",
+    "2cm": "Black_2cm_scale.tif",
+    "5cm": "Black_5cm_scale.tif"
+  },
+  "ruler_sizes_cm": {
+    "1cm": 1,
+    "2cm": 2,
+    "5cm": 5
+  },
+  "detection_method": "general",
+  "ruler_position_locked": false,
+  "fixed_ruler_position": "top",
+  "institution": "",
+  "credit_line": "",
+  "logo_enabled": false,
+  "logo_path": "",
+  "measurements_file": ""
+}

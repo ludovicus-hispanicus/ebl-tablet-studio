@@ -1,0 +1,24 @@
+{
+  "name": "British Museum",
+  "builtin": true,
+  "background_color": [0, 0, 0],
+  "ruler_mode": "adaptive_set",
+  "ruler_files": {
+    "1cm": "BM_1cm_scale.tif",
+    "2cm": "BM_2cm_scale.tif",
+    "5cm": "BM_5cm_scale.tif"
+  },
+  "ruler_sizes_cm": {
+    "1cm": 1.752173913043478,
+    "2cm": 2.802631578947368,
+    "5cm": 5.955752212389381
+  },
+  "detection_method": "general",
+  "ruler_position_locked": false,
+  "fixed_ruler_position": "top",
+  "institution": "",
+  "credit_line": "",
+  "logo_enabled": false,
+  "logo_path": "",
+  "measurements_file": ""
+}
