@@ -4,7 +4,24 @@ Python backend for tablet image stitching, vendored from [`ebl-photo-stitcher`](
 
 ## Status
 
-**Step 1 of 7 complete — source vendored, not yet built or wired in.** The app still ships the downloaded standalone stitcher binary. The code here is purely source-of-record until we build + swap.
+**Step 2 of 7 complete — source vendored and validated to run.** The app still ships the downloaded standalone stitcher binary. The code here is source-of-record, proven to reproduce v2.0-rc.16 behavior, but not yet wired into the shipped installer.
+
+### Validation results (2026-04-18)
+
+Ran the vendored `process_tablets.py` against the bundled v2.0-rc.16 binary on two sandboxed copies of the same tablet folder (Si.32 + Si.49, full clean-room re-run):
+
+- Si.49 `.tif` output: **byte-for-byte identical** (169,932,670 bytes)
+- Si.49 `.jpg` dimensions: **exact match** (7274×7787)
+- Si.32 `.tif` output: 0.04% smaller (345 MB) due to 3-pixel canvas-layout drift from rembg non-determinism
+- Si.32 `.jpg` dimensions: 9267×12374 vs 9270×12375 (3 px / 1 px difference)
+- Wall-clock: **28 s for both tablets, identical to baseline**
+
+Conclusion: vendored code reproduces upstream to within rembg's intrinsic floating-point noise floor. Ready to build with PyInstaller and swap in.
+
+### Fixes applied during Step 2
+
+1. `lib/gui_utils.py` restored as a 40-line stub. The full Tkinter original was deleted during Step 1, but `project_manager.py` imports `resource_path` and `get_persistent_config_dir_path` from it. The stub contains just those helpers plus `APP_NAME_FOR_CONFIG = "eBLImageProcessor"`. Module filename preserved to avoid a cross-file rename during vendoring (proper rename deferred to Step 6).
+2. When running the vendored script directly (not via PyInstaller), set `PYTHONIOENCODING=utf-8` on Windows. The script prints Unicode ✓/✗ marks and the default cp1252 console crashes. PyInstaller bundles wrap stdout so this doesn't surface in packaged builds.
 
 ## What's here
 
