@@ -24,12 +24,9 @@ env/
 # Bundled stitcher binary (downloaded by CI, never committed)
 resources/stitcher/
 
-# ML model weights (downloaded on first run or via CI)
-resources/models/
-*.onnx
-*.pt
-
-# Spike / experiment outputs (generated artifacts, not source)
+# Committed SAM ONNX models live under resources/models/ — keep those tracked.
+# MobileSAM torch weights and scratch ONNX files in experiments/ stay ignored.
+python/weights/
 experiments/
 
 # OS
