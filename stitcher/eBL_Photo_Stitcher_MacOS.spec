@@ -128,7 +128,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name="eBL Photo Stitcher.app",
-    icon="eBL_Logo.icns",
+    icon="../assets/icons/icon.icns",
     bundle_identifier="com.yourcompany.ebl-photo-stitcher",
     version="1.0.0",
     info_plist={
