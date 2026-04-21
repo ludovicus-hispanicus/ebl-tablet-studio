@@ -1,4 +1,26 @@
-# eBL Tablet Studio — Merge Plan
+# eBL Tablet Studio — Merge Plan (HISTORICAL)
+
+> ⚠️ **Historical planning document — not the current architecture.**
+>
+> This was the original migration plan written before any code moved. Phase A
+> (packaging merge) and parts of Phase B (in-process SAM ONNX via
+> onnxruntime-node, Python/torch removed from the Electron side, vendored
+> stitcher source) were executed and shipped. The part of Phase B that
+> proposed replacing rembg/U2NET with SAM for *automatic* tablet extraction
+> was attempted and **reverted** — see the Step 5 post-mortem in
+> [`stitcher/README.md`](../stitcher/README.md#step-5-post-mortem--why-rembg-stayed).
+>
+> **The final shape we're keeping (as of v1.0.0-rc.1):** a two-binaries
+> architecture — one Electron app binary (with SAM ONNX in-process for
+> interactive segmentation) plus one PyInstaller-bundled stitcher `.exe`
+> (with rembg/U2NET for automatic extraction). Both ship inside a single
+> installer per OS. No further consolidation is planned.
+>
+> Read this doc for *historical context* on the merge decisions. For the
+> current architecture, see [`../README.md`](../README.md) and the
+> "Segmentation model split (why two)" section there.
+
+---
 
 **Status:** Draft · **Owner:** Luis Saenz · **Date:** 2026-04-17 · **Last updated:** 2026-04-17 (v3 — fresh-repo approach)
 

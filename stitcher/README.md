@@ -1,19 +1,20 @@
 # Stitcher (vendored)
 
-Python backend for tablet image stitching, vendored from [`ebl-photo-stitcher`](https://github.com/ludovicus-hispanicus/ebl-photo-stitcher) commit `v2.0-rc.16` as part of Phase B of the [merge plan](../docs/merge-plan.md).
+Python backend for tablet image stitching, vendored from [`ebl-photo-stitcher`](https://github.com/ludovicus-hispanicus/ebl-photo-stitcher) commit `v2.0-rc.16`. Builds as `resources/stitcher/eBL.Photo.Stitcher.exe` (Windows) / `.app` (macOS) / bare binary (Linux) via `npm run build-stitcher`.
 
-## Status
+## Status (frozen for v1.0.0)
 
-**Hybrid architecture decided.** Automatic tablet extraction stays on **rembg + U2NET** (via onnxruntime). Interactive SAM segmentation continues to live in the Electron UI (`src/main/sam-onnx.js` in the renamer). Torch + torchvision + mobile-sam pip dropped from `requirements.txt` since nothing uses them at runtime anymore.
+**Two-binaries architecture.** Automatic tablet extraction stays on **rembg + U2NET** (via onnxruntime). Interactive SAM segmentation lives in the Electron UI (`src/main/sam-onnx.js`). Torch + torchvision dropped from the bundle. This is the shape we're shipping — no further consolidation planned.
 
-Phase B effective plan after the decision:
-1. ✅ Source vendored (step 1)
-2. ✅ Validated against v2.0-rc.16 (step 2, Si.49 TIFF byte-identical)
-3. ⬜ Build with PyInstaller locally, drop into `resources/stitcher/` (step 3)
-4. ⬜ CI builds from vendored source (step 4)
-5. ❌ ~~Swap rembg → SAM~~ — **reverted**. SAM is a promptable model; U2NET is the right tool for salient-object auto-extraction. See Step 5 post-mortem below.
-6. ⬜ Delete `lib/gui_workflow_runner.py`'s tkinter bits and rename → `workflow_runner.py` (step 6)
-7. ⬜ Archive old `ebl-photo-stitcher` repo (step 7)
+Migration checklist from the original merge plan, final state:
+
+1. ✅ Source vendored from upstream `v2.0-rc.16`.
+2. ✅ Validated against the upstream binary (Si.49 TIFF byte-identical, Si.32 within rembg's FP noise floor).
+3. ✅ PyInstaller build scripted via `npm run build-stitcher`, output at `resources/stitcher/`.
+4. ✅ CI builds from vendored source on Windows, macOS, Linux (`.github/workflows/release.yml`).
+5. ❌ ~~Swap rembg → SAM for auto-extraction~~ — **attempted, reverted** (see post-mortem below).
+6. ⬜ Rename `lib/gui_workflow_runner.py` → `lib/workflow_runner.py` (cosmetic cleanup; Tkinter GUI is already gone).
+7. ⬜ Archive the standalone [`ebl-photo-stitcher`](https://github.com/ludovicus-hispanicus/ebl-photo-stitcher) repo now that the vendored source is authoritative.
 
 ### Step 5 post-mortem — why rembg stayed
 
@@ -87,8 +88,7 @@ Conclusion: vendored code reproduces upstream to within rembg's intrinsic floati
 
 The Electron app invokes `resources/stitcher/eBL.Photo.Stitcher.exe`, built from this folder via `npm run build-stitcher` (PyInstaller, specs at the top level). Automatic tablet extraction runs through `lib/object_extractor_rembg.py` (rembg + U2NET + onnxruntime). Interactive SAM segmentation lives in the Electron renamer (`src/main/sam-onnx.js`, unrelated to this folder).
 
-## Remaining Phase B follow-ups
+## Open housekeeping
 
-- Move the `npm run build-stitcher` invocation into CI so the bundled `.exe` is rebuilt on pushes to `main`.
-- Rename `lib/gui_workflow_runner.py` → `lib/workflow_runner.py` (cosmetic; the Tkinter GUI is long gone).
+- Rename `lib/gui_workflow_runner.py` → `lib/workflow_runner.py`. Cosmetic — the Tkinter GUI is already gone. Deferred because a lot of call sites reference the old name.
 - Archive the standalone [`ebl-photo-stitcher`](https://github.com/ludovicus-hispanicus/ebl-photo-stitcher) repo now that the vendored source is authoritative.
