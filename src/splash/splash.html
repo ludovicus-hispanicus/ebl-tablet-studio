@@ -18,14 +18,16 @@
       color: #f0f0f0;
     }
 
-    /* Background slideshow — stacked, cross-fade via opacity */
+    /* Background slideshow — stacked, cross-fade via opacity.
+       background-position: top → anchor the visible area to the top of the
+       tablet composite (obverse first), not the middle. */
     .slide {
       position: absolute;
       inset: 0;
       background-size: cover;
-      background-position: center;
+      background-position: top center;
       opacity: 0;
-      transition: opacity 1.2s ease-in-out;
+      transition: opacity 0.8s ease-in-out;
       filter: brightness(0.55);
     }
     .slide.active {
@@ -80,6 +82,26 @@
       flex: 1;
     }
 
+    /* Caption for the currently-visible background tablet: museum number
+       + copyright. Sits just above the log, right-aligned, dim. */
+    .tablet-credit {
+      font-size: 10.5px;
+      color: rgba(255, 255, 255, 0.75);
+      letter-spacing: 0.3px;
+      text-align: right;
+      margin-bottom: 8px;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+      transition: opacity 0.6s ease-in-out;
+    }
+    .tablet-credit .tablet-id {
+      font-weight: 600;
+      color: rgba(255, 255, 255, 0.9);
+    }
+    .tablet-credit .tablet-sep {
+      opacity: 0.55;
+      margin: 0 6px;
+    }
+
     .log {
       font-size: 11.5px;
       font-family: "SF Mono", "Consolas", "Menlo", "Courier New", monospace;
@@ -132,9 +154,23 @@
   </style>
 </head>
 <body>
-  <div class="slide active" style="background-image: url('images/01.jpg');"></div>
-  <div class="slide" style="background-image: url('images/02.jpg');"></div>
-  <div class="slide" style="background-image: url('images/03.jpg');"></div>
+  <!-- Alternates IM / BM / IM / BM for visual variety. -->
+  <div class="slide active"
+       data-id="IM 58434"
+       data-rights="© Iraq Museum"
+       style="background-image: url('images/01.jpg');"></div>
+  <div class="slide"
+       data-id="BM 48711"
+       data-rights="© Trustees of the British Museum"
+       style="background-image: url('images/02.jpg');"></div>
+  <div class="slide"
+       data-id="IM 58441"
+       data-rights="© Iraq Museum"
+       style="background-image: url('images/03.jpg');"></div>
+  <div class="slide"
+       data-id="BM 44074"
+       data-rights="© Trustees of the British Museum"
+       style="background-image: url('images/04.jpg');"></div>
 
   <div class="overlay"></div>
 
@@ -149,6 +185,10 @@
 
     <div class="spacer"></div>
 
+    <div class="tablet-credit">
+      <span class="tablet-id" id="tablet-id"></span><span class="tablet-sep">·</span><span id="tablet-rights"></span>
+    </div>
+
     <div class="log" id="log"></div>
 
     <div class="footer">
@@ -160,15 +200,28 @@
   <script>
     const { ipcRenderer } = require('electron');
 
-    // Cross-fade the background slides every 3.5s.
+    // Cross-fade the background slides every 3.5s and update the caption.
     const slides = document.querySelectorAll('.slide');
+    const tabletIdEl = document.getElementById('tablet-id');
+    const tabletRightsEl = document.getElementById('tablet-rights');
+    function applySlideCaption(slide) {
+      if (!slide) return;
+      if (tabletIdEl) tabletIdEl.textContent = slide.dataset.id || '';
+      if (tabletRightsEl) tabletRightsEl.textContent = slide.dataset.rights || '';
+    }
+    // 2000 ms per slide × 4 slides ≈ 8 s to cycle once, which fits inside a
+    // typical cold-start (splash is up ~6–10 s). If the app's startup grows
+    // with new features, either raise SPLASH_POST_LOAD_BUFFER_MS in main.js
+    // or lower this interval further to keep all slides visible.
     let slideIdx = 0;
+    applySlideCaption(slides[0]);
     if (slides.length > 1) {
       setInterval(() => {
         slides[slideIdx].classList.remove('active');
         slideIdx = (slideIdx + 1) % slides.length;
         slides[slideIdx].classList.add('active');
-      }, 3500);
+        applySlideCaption(slides[slideIdx]);
+      }, 2000);
     }
 
     // Log panel — keeps the latest few status messages visible, newest at bottom.

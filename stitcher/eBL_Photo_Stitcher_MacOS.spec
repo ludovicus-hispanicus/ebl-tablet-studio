@@ -62,7 +62,7 @@ def get_cairo_dependencies():
 cairo_binaries = get_cairo_dependencies()
 
 a = Analysis(
-    ["gui_app.py"],
+    ["process_tablets.py"],
     pathex=["./lib"],
     binaries=pyexiv2_binaries + cairo_binaries,
     datas=[

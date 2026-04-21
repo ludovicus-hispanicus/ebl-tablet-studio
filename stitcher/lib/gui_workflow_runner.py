@@ -51,13 +51,19 @@ def run_complete_image_processing_workflow(
     enable_hdr_processing=False,
     use_first_photo_measurements=False,
     force_manual_ruler=False,
-    selected_tablets=None
+    selected_tablets=None,
+    output_type="digital"
 ):
     """Main workflow orchestration function."""
     
     print(f"Workflow started for folder: {source_folder_path}")
-    
+
     clear_fallback_comparisons()
+    try:
+        from lens_correction_hint import reset as _reset_lens_hint
+        _reset_lens_hint()
+    except Exception:
+        pass
     start_time = time.time()
     failed_objects = []
 
@@ -262,7 +268,7 @@ def run_complete_image_processing_workflow(
                 add_logo, logo_path, current_prog_base, prog_per_folder, progress_callback,
                 use_cached_measurements, cached_px_per_cm, cached_measurements_used,
                 cached_detected_bg_color, cached_output_bg_color, app_root_window,
-                force_manual_ruler
+                force_manual_ruler, output_type
             )
 
             if result['success']:
@@ -309,7 +315,10 @@ def run_complete_image_processing_workflow(
         normalize_subfolder_names(processed_subfolders)
 
     try:
-        finalize_measurements_with_comparison(source_folder_path, photographer_name)
+        finalize_measurements_with_comparison(
+            source_folder_path, photographer_name,
+            reference_measurements=measurements_dict,
+        )
     except Exception as e:
         print(f"Warning: Could not create measurement comparison file: {e}")
 
@@ -328,7 +337,8 @@ def process_single_subfolder(subfolder_path_item, subfolder_name_item, image_ext
                              current_prog_base, prog_per_folder, progress_callback,
                              use_cached_measurements=False, cached_px_per_cm=None, cached_measurements_used=None,
                              cached_detected_bg_color=None, cached_output_bg_color=None,
-                             app_instance=None, force_manual_ruler=False
+                             app_instance=None, force_manual_ruler=False,
+                             output_type="digital"
 ):
     """Process a single subfolder."""
 
@@ -667,14 +677,18 @@ def process_single_subfolder(subfolder_path_item, subfolder_name_item, image_ext
         else:
             print(f"   No Excel measurements to process for {subfolder_name_item}")
 
-    cr2_conv_intermediate = process_intermediate_images(
-        all_files, subfolder_path_item, subfolder_name_item,
-        image_extensions_tuple, object_artifact_suffix_config,
-        combined_other_views, ruler_for_scale_fp, raw_ext_config,
-        object_extraction_bg_mode, output_bg_color, museum_selection,
-        gradient_width_fraction
-    )
-    result['cr2_conversions'] += cr2_conv_intermediate
+    # Intermediate extraction is only needed for the digital variant. Skip it
+    # entirely when the run is print-only to save the rembg round per
+    # intermediate view. "both" still needs them for the digital pass.
+    if output_type in ("digital", "both"):
+        cr2_conv_intermediate = process_intermediate_images(
+            all_files, subfolder_path_item, subfolder_name_item,
+            image_extensions_tuple, object_artifact_suffix_config,
+            combined_other_views, ruler_for_scale_fp, raw_ext_config,
+            object_extraction_bg_mode, output_bg_color, museum_selection,
+            gradient_width_fraction
+        )
+        result['cr2_conversions'] += cr2_conv_intermediate
 
     progress += sub_steps["other_obj"] * prog_per_folder
 
@@ -695,21 +709,34 @@ def process_single_subfolder(subfolder_path_item, subfolder_name_item, image_ext
     if tuple(stitched_output_bg_color) == (0, 0, 0):
         stitched_output_bg_color = output_bg_color
 
-    process_tablet_subfolder(
-        subfolder_path=subfolder_path_item,
-        ruler_position=ruler_position,
-        main_input_folder_path=source_folder_path,
-        output_base_name=subfolder_name_item,
-        pixels_per_cm=px_cm_val,
-        photographer_name=photographer_name,
-        ruler_image_for_scale_path=ruler_for_scale_fp,
-        add_logo=add_logo,
-        logo_path=logo_path if add_logo else None,
-        object_extraction_background_mode=object_extraction_bg_mode,
-        stitched_bg_color=stitched_output_bg_color,
-        custom_layout=None,
-        view_file_patterns_config=view_file_patterns_config,  
-    )
+    # Pick which output variants to produce. "both" runs the canvas twice,
+    # sharing all upstream work (extraction, measurements, ruler generation).
+    variants = []
+    if output_type in ("digital", "both"):
+        variants.append({"include_intermediates": True, "output_folder_suffix": ""})
+    if output_type in ("print", "both"):
+        variants.append({"include_intermediates": False, "output_folder_suffix": "_Print"})
+    if not variants:
+        variants.append({"include_intermediates": True, "output_folder_suffix": ""})
+
+    for variant in variants:
+        process_tablet_subfolder(
+            subfolder_path=subfolder_path_item,
+            ruler_position=ruler_position,
+            main_input_folder_path=source_folder_path,
+            output_base_name=subfolder_name_item,
+            pixels_per_cm=px_cm_val,
+            photographer_name=photographer_name,
+            ruler_image_for_scale_path=ruler_for_scale_fp,
+            add_logo=add_logo,
+            logo_path=logo_path if add_logo else None,
+            object_extraction_background_mode=object_extraction_bg_mode,
+            stitched_bg_color=stitched_output_bg_color,
+            custom_layout=None,
+            view_file_patterns_config=view_file_patterns_config,
+            include_intermediates=variant["include_intermediates"],
+            output_folder_suffix=variant["output_folder_suffix"],
+        )
 
     result['success'] = True
 

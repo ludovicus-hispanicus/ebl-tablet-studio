@@ -6,7 +6,6 @@ const {
   loadStitcherConfig,
   saveStitcherConfig,
   verifyStitcherExe,
-  autoDetectStitcherExe,
   runStitcherHeadless,
 } = require('./stitcher-bridge');
 const projectManager = require('./project-manager');
@@ -85,6 +84,45 @@ let mainWindow;
 
 let splashWindow = null;
 
+// Pace splash log lines so they appear one at a time (gives an elegant
+// "loading" feel even when the underlying step completes instantly).
+const SPLASH_LINE_INTERVAL_MS = 500;
+// After the main window finishes loading AND all queued lines have drained,
+// wait this much longer before swapping splash → main window.
+const SPLASH_POST_LOAD_BUFFER_MS = 1500;
+// Floor on total splash visibility so the background slideshow can cycle
+// through all slides before the main window takes over. splash.html rotates
+// 4 slides at 2000 ms each, so we need ~7 s minimum to reach the last one.
+// If app startup is already longer than this, we wait no extra time — the
+// floor only kicks in when the cold-start is quick.
+const SPLASH_MIN_TOTAL_MS = 7000;
+
+let splashShownAt = 0;
+const splashQueue = [];
+let splashDrainTimer = null;
+let splashLastDeliveredAt = 0;
+let splashDrainedResolve = null;
+let splashDrainedPromise = new Promise((r) => { splashDrainedResolve = r; });
+
+function scheduleSplashDrain() {
+  if (splashDrainTimer) return;
+  const now = Date.now();
+  const wait = Math.max(0, splashLastDeliveredAt + SPLASH_LINE_INTERVAL_MS - now);
+  splashDrainTimer = setTimeout(() => {
+    splashDrainTimer = null;
+    const message = splashQueue.shift();
+    if (message != null && splashWindow && !splashWindow.isDestroyed()) {
+      try { splashWindow.webContents.send('splash-status', message); } catch (e) { /* ignore */ }
+      splashLastDeliveredAt = Date.now();
+    }
+    if (splashQueue.length > 0) {
+      scheduleSplashDrain();
+    } else if (splashDrainedResolve) {
+      splashDrainedResolve();
+    }
+  }, wait);
+}
+
 function createSplash() {
   splashWindow = new BrowserWindow({
     width: 560,
@@ -104,6 +142,7 @@ function createSplash() {
   splashWindow.loadFile(path.join(__dirname, '..', 'splash', 'splash.html'));
   splashWindow.once('ready-to-show', () => {
     splashWindow.show();
+    splashShownAt = Date.now();
     try {
       splashWindow.webContents.send('splash-version', app.getVersion());
     } catch (e) { /* ignore */ }
@@ -112,9 +151,14 @@ function createSplash() {
 }
 
 function splashStatus(message) {
-  if (splashWindow && !splashWindow.isDestroyed()) {
-    try { splashWindow.webContents.send('splash-status', message); } catch (e) { /* ignore */ }
+  if (!splashWindow || splashWindow.isDestroyed()) return;
+  // Re-arm the drained promise whenever new lines arrive, so any waiter
+  // ends up waiting for the *final* drain, not an earlier empty moment.
+  if (splashDrainedResolve === null || splashQueue.length === 0) {
+    splashDrainedPromise = new Promise((r) => { splashDrainedResolve = r; });
   }
+  splashQueue.push(message);
+  scheduleSplashDrain();
 }
 
 function createWindow() {
@@ -141,12 +185,19 @@ function createWindow() {
     }
   });
 
-  // Once the renderer is fully loaded, swap splash → main window.
-  mainWindow.webContents.once('did-finish-load', () => {
-    mainWindow.show();
-    if (splashWindow && !splashWindow.isDestroyed()) {
-      splashWindow.close();
-    }
+  // Once the renderer is fully loaded, wait for the splash log to finish
+  // draining, add a small buffer, AND hold the splash until it has been
+  // visible long enough to cycle through all background slides. Then swap
+  // splash → main window so the two don't overlap.
+  mainWindow.webContents.once('did-finish-load', async () => {
+    try { await splashDrainedPromise; } catch (e) { /* ignore */ }
+    const elapsed = splashShownAt ? Date.now() - splashShownAt : 0;
+    const floorRemaining = Math.max(0, SPLASH_MIN_TOTAL_MS - elapsed);
+    const wait = Math.max(SPLASH_POST_LOAD_BUFFER_MS, floorRemaining);
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
+      if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
+    }, wait);
   });
 }
 
@@ -340,23 +391,6 @@ ipcMain.handle('verify-stitcher-exe', async (event, exePath) => {
   return verifyStitcherExe(exePath);
 });
 
-ipcMain.handle('auto-detect-stitcher', async () => {
-  return autoDetectStitcherExe();
-});
-
-ipcMain.handle('select-stitcher-exe', async () => {
-  const filters = process.platform === 'win32'
-    ? [{ name: 'Executable', extensions: ['exe'] }, { name: 'All Files', extensions: ['*'] }]
-    : [{ name: 'All Files', extensions: ['*'] }];
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openFile'],
-    title: 'Select eBL Photo Stitcher',
-    filters,
-  });
-  if (result.canceled) return null;
-  return result.filePaths[0];
-});
-
 ipcMain.handle('process-tablets', async (event, rootFolder, tablets) => {
   const config = loadStitcherConfig();
   // Resolve active project so the stitcher uses the settings the user
@@ -374,6 +408,10 @@ ipcMain.handle('process-tablets', async (event, rootFolder, tablets) => {
     if (project.logo_enabled) extraArgs.addLogo = true;
     if (project.logo_path) extraArgs.logoPath = project.logo_path;
     if (project.measurements_file) extraArgs.measurements = project.measurements_file;
+    if (project.institution) extraArgs.institution = project.institution;
+    if (project.credit_line) extraArgs.creditLine = project.credit_line;
+    if (project.usage_terms) extraArgs.usageTerms = project.usage_terms;
+    if (project.output_type) extraArgs.outputType = project.output_type;
   }
   return runStitcherHeadless(config.stitcherExe, rootFolder, tablets, (progress) => {
     mainWindow.webContents.send('stitcher-progress', progress);
@@ -562,6 +600,154 @@ ipcMain.handle('select-logo-file', async () => {
   return result.filePaths[0];
 });
 
+ipcMain.handle('select-ruler-file', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openFile'],
+    title: 'Select Ruler Image',
+    filters: [{ name: 'Images', extensions: ['svg', 'png', 'jpg', 'jpeg', 'tif', 'tiff'] }],
+  });
+  if (result.canceled) return null;
+  return result.filePaths[0];
+});
+
+// List rulers bundled with the stitcher, plus any custom ruler the active
+// project points at. In dev mode the stitcher source lives at
+// stitcher/assets/; in packaged mode the bundled .exe carries its own copy
+// but we also ship a sibling assets folder at resources/stitcher/assets/
+// for GUI preview access.
+ipcMain.handle('list-rulers', async () => {
+  const candidates = [
+    path.join(__dirname, '..', '..', 'stitcher', 'assets'),
+    path.join(process.resourcesPath || '', 'stitcher', 'assets'),
+  ];
+  let assetsDir = null;
+  for (const dir of candidates) {
+    if (dir && fs.existsSync(dir)) { assetsDir = dir; break; }
+  }
+  if (!assetsDir) return { builtin: [], assetsDir: null };
+
+  const files = fs.readdirSync(assetsDir);
+  // "ruler" catches General_eBL_photo_ruler etc.; "scale" catches
+  // BM_*_scale.tif and Black_*_scale.tif (British Museum / black-background
+  // scale bars). Include .tif so TIFF-only assets show up too.
+  const bases = new Set();
+  for (const f of files) {
+    if (/ruler|scale/i.test(f) && /\.(svg|png|tif|tiff)$/i.test(f)) {
+      bases.add(f.replace(/\.(svg|png|tif|tiff)$/i, ''));
+    }
+  }
+
+  const sharp = require('sharp');
+  const builtin = [];
+  for (const base of bases) {
+    const svg = path.join(assetsDir, base + '.svg');
+    const png = path.join(assetsDir, base + '.png');
+    const tif = path.join(assetsDir, base + '.tif');
+    const tiff = path.join(assetsDir, base + '.tiff');
+    // Stitcher prefers vector SVG → PNG → TIFF.
+    const stitcherPath = fs.existsSync(svg) ? svg
+      : fs.existsSync(png) ? png
+      : fs.existsSync(tif) ? tif
+      : fs.existsSync(tiff) ? tiff
+      : null;
+    // Preview prefers rasterized source — PNG first (safer than SVG which
+    // sometimes has features that don't rasterize cleanly), then SVG, then TIF.
+    const previewPath = fs.existsSync(png) ? png
+      : fs.existsSync(svg) ? svg
+      : fs.existsSync(tif) ? tif
+      : fs.existsSync(tiff) ? tiff
+      : null;
+    if (!stitcherPath) continue;
+
+    // Classification:
+    //   general          — general-purpose rulers usable on any tablet
+    //   bm_donated       — BM scale bars, donated by the British Museum
+    //                      for free use (shown under General in the UI)
+    //   black_jena       — Black-background scale bars (Jena)
+    //   iraq_museum      — IM photo ruler
+    //   project_ebl      — eBL project ruler
+    //   project_sippar   — Sippar Library project ruler
+    let group = 'general';
+    let sortKey = 9;
+    if (/^BM_\dcm_scale/i.test(base)) group = 'bm_donated';
+    else if (/^Black_\dcm_scale/i.test(base)) group = 'black_jena';
+    else if (/^IM_photo_ruler/i.test(base)) group = 'iraq_museum';
+    else if (/^Sippar_Library_Ruler/i.test(base)) group = 'project_sippar';
+    else if (/^General_eBL_photo_ruler/i.test(base)) group = 'project_ebl';
+    else if (/^General_External_photo_ruler/i.test(base)) group = 'general';
+    const sizeMatch = base.match(/(\d)cm/);
+    if (sizeMatch) sortKey = parseInt(sizeMatch[1], 10);
+
+    // Aspect ratio — extreme-wide rulers (e.g. the External photo ruler
+    // at ~4.6:1) need more horizontal room in the UI or they collapse to
+    // a barely-visible strip. Wide flag lets the renderer span 2 columns.
+    let aspect = 1;
+    let wide = false;
+    try {
+      const meta = await sharp(previewPath).metadata();
+      if (meta.width && meta.height) aspect = meta.width / meta.height;
+      wide = aspect >= 2.5;
+    } catch (e) { /* metadata failures: treat as normal */ }
+
+    builtin.push({
+      id: base,
+      label: base.replace(/_/g, ' ').replace(/\bphoto ruler\b/i, '').replace(/\s+/g, ' ').trim(),
+      path: stitcherPath,
+      preview: previewPath,
+      group,
+      sortKey,
+      wide,
+      aspect,
+    });
+  }
+
+  builtin.sort((a, b) => {
+    if (a.group !== b.group) return a.group.localeCompare(b.group);
+    if (a.sortKey !== b.sortKey) return a.sortKey - b.sortKey;
+    return a.label.localeCompare(b.label);
+  });
+  return { builtin, assetsDir };
+});
+
+// Rasterize any ruler image (SVG / PNG / TIFF / JPG) to a consistent PNG
+// data URL for the renderer. Browsers can't render TIFF natively, and some
+// SVGs have features that break when loaded via raw data URL — sharp
+// sidesteps both. We scale by WIDTH only (no height cap) so extreme-aspect
+// rulers (e.g. the External ruler at ~4.5:1) keep their natural proportions;
+// the card CSS constrains the visible box.
+ipcMain.handle('get-ruler-preview', async (event, imagePath) => {
+  try {
+    if (!imagePath) return null;
+    // Resolve bare filenames (as stored in built-in stitcher project JSONs)
+    // against the stitcher assets dir. Absolute paths are used as-is.
+    let resolved = imagePath;
+    if (!fs.existsSync(resolved) && !path.isAbsolute(imagePath)
+        && !imagePath.includes('/') && !imagePath.includes('\\')) {
+      const candidates = [
+        path.join(__dirname, '..', '..', 'stitcher', 'assets', imagePath),
+        path.join(process.resourcesPath || '', 'stitcher', 'assets', imagePath),
+      ];
+      for (const c of candidates) {
+        if (c && fs.existsSync(c)) { resolved = c; break; }
+      }
+    }
+    if (!fs.existsSync(resolved)) {
+      console.error('[ruler preview] not found:', imagePath);
+      return null;
+    }
+    const sharp = require('sharp');
+    const buf = await sharp(resolved, { limitInputPixels: false, density: 200 })
+      .resize({ width: 600, fit: 'inside', withoutEnlargement: false })
+      .flatten({ background: '#ffffff' })
+      .png()
+      .toBuffer();
+    return `data:image/png;base64,${buf.toString('base64')}`;
+  } catch (e) {
+    console.error('[ruler preview]', imagePath, e.message);
+    return null;
+  }
+});
+
 ipcMain.handle('scan-results', async (event, rootFolder) => {
   const { scanResults, loadReviewStatus, saveReviewStatus } = require('./results-ops');
   return scanResults(rootFolder);
@@ -575,6 +761,21 @@ ipcMain.handle('load-review-status', async (event, rootFolder) => {
 ipcMain.handle('save-review-status', async (event, rootFolder, status) => {
   const { saveReviewStatus } = require('./results-ops');
   return saveReviewStatus(rootFolder, status);
+});
+
+ipcMain.handle('load-project-notes', async (event, rootFolder) => {
+  const { loadProjectNotes } = require('./results-ops');
+  return loadProjectNotes(rootFolder);
+});
+
+ipcMain.handle('save-project-notes', async (event, rootFolder, notes) => {
+  const { saveProjectNotes } = require('./results-ops');
+  return saveProjectNotes(rootFolder, notes);
+});
+
+ipcMain.handle('get-result-metadata', async (event, imagePath) => {
+  const { getResultMetadata } = require('./results-ops');
+  return getResultMetadata(imagePath);
 });
 
 ipcMain.handle('get-result-thumbnail', async (event, imagePath) => {

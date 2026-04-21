@@ -9,7 +9,7 @@ If no tablets are specified, processes all.
 Usage:
     python process_tablets.py --root "C:/path/project"
     python process_tablets.py --root "C:/path/project" --tablets "Si.10" "Si.11"
-    python process_tablets.py --root "C:/path/project" --museum "Non-eBL Ruler (VAM)" --measurements "path/to/measurements.xlsx"
+    python process_tablets.py --root "C:/path/project" --museum "General (white background)" --measurements "path/to/measurements.xlsx"
 
 Exit codes:
     0 - success
@@ -21,6 +21,15 @@ import os
 import sys
 import argparse
 import json
+
+# Force UTF-8 stdout/stderr so unicode chars (✓, ✗, em-dash, etc.) don't
+# crash on Windows' cp1252 console. PYTHONIOENCODING isn't respected by
+# PyInstaller-frozen interpreters, so we reconfigure explicitly.
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
 
 script_directory = os.path.dirname(os.path.abspath(__file__))
 lib_directory = os.path.join(script_directory, "lib")
@@ -37,8 +46,8 @@ def main():
                         help='Root folder containing tablet subfolders')
     parser.add_argument('--tablets', nargs='*', default=None,
                         help='Specific tablet names to process (default: all)')
-    parser.add_argument('--museum', default='Non-eBL Ruler (VAM)',
-                        help='Museum ruler configuration to use')
+    parser.add_argument('--museum', default='General (white background)',
+                        help='Project / museum ruler configuration to use')
     parser.add_argument('--measurements', default=None,
                         help='Path to Excel measurements file')
     parser.add_argument('--photographer', default='Unknown',
@@ -50,14 +59,59 @@ def main():
                         help='Add institution logo to output')
     parser.add_argument('--logo-path', default=None,
                         help='Path to logo image file')
+    parser.add_argument('--institution', default=None,
+                        help='Institution name (overrides stitch_config.STITCH_INSTITUTION)')
+    parser.add_argument('--credit-line', default=None,
+                        help='Credit / copyright text (overrides stitch_config.STITCH_CREDIT_LINE)')
+    parser.add_argument('--usage-terms', default=None,
+                        help='Usage terms / license (overrides stitch_config.STITCH_XMP_USAGE_TERMS)')
+    parser.add_argument('--headless', action='store_true',
+                        help='Legacy no-op flag — this CLI is always headless. Kept for compat with existing Electron caller.')
     parser.add_argument('--json-progress', action='store_true',
                         help='Emit progress as JSON lines for programmatic parsing')
+    parser.add_argument('--output-type', default='digital',
+                        choices=['digital', 'print', 'both'],
+                        help='Which stitched variant(s) to produce. '
+                             '"digital" writes _Final_JPG/_Final_TIFF (all views, gradient blends). '
+                             '"print" writes _Final_JPG_Print/_Final_TIFF_Print (only _01-_06). '
+                             '"both" writes both variants.')
 
     args = parser.parse_args()
 
     if not os.path.isdir(args.root):
         print(f"ERROR: Root folder does not exist: {args.root}", file=sys.stderr)
         return 2
+
+    # Apply per-run metadata overrides BEFORE any downstream module reads from
+    # stitch_config. stitch_output.py and pure_metadata.py consume these values
+    # via module-level lookups, so mutating the module is enough.
+    try:
+        sys.path.insert(0, lib_directory)
+        import stitch_config
+        if args.institution:
+            stitch_config.STITCH_INSTITUTION = args.institution
+        if args.credit_line:
+            stitch_config.STITCH_CREDIT_LINE = args.credit_line
+        if args.usage_terms:
+            stitch_config.STITCH_XMP_USAGE_TERMS = args.usage_terms
+    except Exception as e:
+        print(f"Warning: could not apply metadata overrides: {e}", file=sys.stderr)
+
+    # Load the selected project and mark it active so workflow code can read
+    # its config (ruler_mode, ruler_file / ruler_files, institution, etc.)
+    # directly from the JSON instead of relying on hardcoded museum-name
+    # branches in select_ruler_template.
+    try:
+        sys.path.insert(0, lib_directory)
+        import project_manager as _pm
+        _project = _pm.get_project_by_name(args.museum)
+        if _project is not None:
+            _pm.set_active_project(_project)
+            print(f"Active project: {_project.get('name')}")
+        else:
+            print(f"Warning: project not found: {args.museum}", file=sys.stderr)
+    except Exception as e:
+        print(f"Warning: could not activate project '{args.museum}': {e}", file=sys.stderr)
 
     # Load measurements if provided
     measurements_dict = {}
@@ -166,6 +220,7 @@ def main():
             use_measurements_from_database=bool(measurements_dict),
             measurements_dict=measurements_dict,
             selected_tablets=args.tablets,
+            output_type=args.output_type,
         )
     except Exception as e:
         print(f"ERROR during processing: {e}", file=sys.stderr)

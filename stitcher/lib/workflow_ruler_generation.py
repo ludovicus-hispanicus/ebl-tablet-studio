@@ -68,7 +68,7 @@ def select_ruler_template(museum_selection, art_fp, px_cm_val, ruler_template_1c
                 elif art_w_cm_val < t2:
                     chosen_ruler_tpl = ruler_template_2cm_asset_path
 
-    elif museum_selection == "Black background (Jena)":
+    elif museum_selection == "General (black background)":
         art_img_chk = cv2.imread(art_fp)
         if art_img_chk is not None and px_cm_val > 0:
             art_w_cm_val = art_img_chk.shape[1] / px_cm_val
@@ -101,11 +101,11 @@ def select_ruler_template(museum_selection, art_fp, px_cm_val, ruler_template_1c
         custom_ruler_size_cm = 4.317
         print(f"Using eBL Ruler (CBS): {chosen_ruler_tpl}")
 
-    elif museum_selection == "Non-eBL Ruler (VAM)":
+    elif museum_selection == "General (white background)":
         chosen_ruler_tpl = os.path.join(
             os.path.dirname(ruler_template_1cm_asset_path), "General_External_photo_ruler.svg")
         custom_ruler_size_cm = 3.248
-        print(f"Using Non-eBL Ruler (VAM): {chosen_ruler_tpl}")
+        print(f"Using General (white background) ruler: {chosen_ruler_tpl}")
 
     return chosen_ruler_tpl, custom_ruler_size_cm
 

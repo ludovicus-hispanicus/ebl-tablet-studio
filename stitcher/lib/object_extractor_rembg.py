@@ -380,6 +380,16 @@ def extract_and_save_center_object(
 
             bbox = (x_min, y_min, x_max, y_max)
 
+    try:
+        from lens_correction_hint import check_extraction
+        check_extraction(
+            input_image_filepath, bbox,
+            output_img.width, output_img.height,
+            file_id=os.path.basename(input_image_filepath),
+        )
+    except Exception:
+        pass
+
     selected_mask_pil = Image.fromarray(selected_object_mask)
 
     filtered_output = Image.new('RGBA', output_img.size, (0, 0, 0, 0))

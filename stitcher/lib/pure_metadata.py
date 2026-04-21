@@ -153,37 +153,68 @@ def apply_all_metadata(
 
             new_exif_data = {}
             new_xmp_data = {}
+            new_iptc_data = {}
 
+            # Shared timestamps used across EXIF / XMP.
+            now = datetime.datetime.now()
+            exif_dt = now.strftime('%Y:%m:%d %H:%M:%S')   # EXIF spec format
+            iso_dt = now.isoformat()
+
+            # ---- EXIF (Exif.Image.* + Exif.Photo.*) ----
             new_exif_data['Exif.Image.Artist'] = f"{photographer_name}"
             new_exif_data['Exif.Image.Copyright'] = copyright_text
             new_exif_data['Exif.Image.ImageDescription'] = image_title
             new_exif_data['Exif.Image.Software'] = "eBL Photo Stitcher"
+            new_exif_data['Exif.Image.DateTime'] = exif_dt
+            new_exif_data['Exif.Photo.DateTimeOriginal'] = exif_dt
+            new_exif_data['Exif.Photo.DateTimeDigitized'] = exif_dt
 
-            new_exif_data['Exif.Image.XResolution'] = f"{image_dpi}/1"
-            new_exif_data['Exif.Image.YResolution'] = f"{image_dpi}/1"
-            new_exif_data['Exif.Image.ResolutionUnit'] = '2'
+            # Write resolution in metric (px/cm, ResolutionUnit=3) when we have
+            # a measured scale; fall back to DPI (inches, ResolutionUnit=2)
+            # when no per-object measurement is available.
+            if pixels_per_cm and pixels_per_cm > 0:
+                px_cm_int = int(round(pixels_per_cm))
+                new_exif_data['Exif.Image.XResolution'] = f"{px_cm_int}/1"
+                new_exif_data['Exif.Image.YResolution'] = f"{px_cm_int}/1"
+                new_exif_data['Exif.Image.ResolutionUnit'] = '3'
+            else:
+                new_exif_data['Exif.Image.XResolution'] = f"{image_dpi}/1"
+                new_exif_data['Exif.Image.YResolution'] = f"{image_dpi}/1"
+                new_exif_data['Exif.Image.ResolutionUnit'] = '2'
 
+            # ---- XMP (Dublin Core + xmp + xmpRights + photoshop + ebl) ----
             new_xmp_data['Xmp.dc.title'] = image_title
             new_xmp_data['Xmp.dc.creator'] = [photographer_name]
             new_xmp_data['Xmp.dc.rights'] = copyright_text
             new_xmp_data['Xmp.dc.description'] = image_title
+            new_xmp_data['Xmp.dc.identifier'] = image_title
+            new_xmp_data['Xmp.dc.publisher'] = [institution_name]
+            new_xmp_data['Xmp.dc.date'] = [iso_dt]
+            new_xmp_data['Xmp.dc.type'] = ['Image']
 
-            new_xmp_data['Xmp.dc.subject'] = copyright_text
+            # dc.subject is Dublin Core "keywords", not copyright.
+            new_xmp_data['Xmp.dc.subject'] = [image_title]
+
+            new_xmp_data['Xmp.xmp.CreatorTool'] = "eBL Photo Stitcher"
+            new_xmp_data['Xmp.xmp.CreateDate'] = iso_dt
+            new_xmp_data['Xmp.xmp.ModifyDate'] = iso_dt
+            new_xmp_data['Xmp.xmp.MetadataDate'] = iso_dt
 
             new_xmp_data['Xmp.photoshop.Credit'] = credit_line_text
             new_xmp_data['Xmp.photoshop.Source'] = institution_name
+            new_xmp_data['Xmp.photoshop.Headline'] = image_title
 
             new_xmp_data['Xmp.xmpRights.Marked'] = 'True'
             if usage_terms_text:
-                new_xmp_data['Xmp.xmpRights.UsageTerms'] = [
-                    {'lang': 'x-default', 'value': usage_terms_text}]
-
-            new_xmp_data['Xmp.xmp.MetadataDate'] = datetime.datetime.now().isoformat()
+                # Plain string: pyexiv2 auto-wraps single-language XMP
+                # AltLang tags as x-default. Writing a list-of-dict here
+                # stores the Python repr literally instead of a proper
+                # lang-alt, which readers then display as raw text.
+                new_xmp_data['Xmp.xmpRights.UsageTerms'] = usage_terms_text
 
             # Physical object measurements (if available)
             if object_width_cm is not None and object_width_cm > 0:
                 new_xmp_data['Xmp.dc.format'] = f"Tablet dimensions: {object_width_cm:.1f} x {object_length_cm:.1f} cm" if object_length_cm else f"Tablet width: {object_width_cm:.1f} cm"
-                # IPTC Extension fields for artwork/object dimensions
                 try:
                     pyexiv2.registerNs('http://ns.ebl.lmu.de/1.0/', 'ebl')
                 except Exception:
@@ -194,8 +225,31 @@ def apply_all_metadata(
                 if pixels_per_cm and pixels_per_cm > 0:
                     new_xmp_data['Xmp.ebl.PixelsPerCm'] = f"{pixels_per_cm:.2f}"
 
+            # ---- IPTC-IIM (legacy; older tools still rely on this) ----
+            # Mirrors the XMP/EXIF content so readers that only understand the
+            # older IPTC-IIM standard still see the same information.
+            # Declare UTF-8 encoding via the ISO 2022 ESC % G escape so
+            # readers don't default to Latin-1 and turn "á" into "Ã¡".
+            new_iptc_data['Iptc.Envelope.CharacterSet'] = '\x1b%G'
+            new_iptc_data['Iptc.Application2.ObjectName'] = image_title
+            new_iptc_data['Iptc.Application2.Headline'] = image_title
+            new_iptc_data['Iptc.Application2.Caption'] = image_title
+            new_iptc_data['Iptc.Application2.Byline'] = [photographer_name]
+            new_iptc_data['Iptc.Application2.Credit'] = credit_line_text
+            new_iptc_data['Iptc.Application2.Source'] = institution_name
+            new_iptc_data['Iptc.Application2.Copyright'] = copyright_text
+            new_iptc_data['Iptc.Application2.Keywords'] = [image_title]
+            new_iptc_data['Iptc.Application2.DateCreated'] = now.strftime('%Y-%m-%d')
+            new_iptc_data['Iptc.Application2.TimeCreated'] = now.strftime('%H:%M:%S%z') or now.strftime('%H:%M:%S')
+
             img.modify_exif(new_exif_data)
             img.modify_xmp(new_xmp_data)
+            try:
+                img.modify_iptc(new_iptc_data)
+            except Exception as e_iptc:
+                # IPTC support is version-dependent in pyexiv2; EXIF+XMP is
+                # sufficient on its own, so treat this as non-fatal.
+                print(f"      Warn: IPTC-IIM write skipped ({e_iptc})")
 
             img.close()
             img = None

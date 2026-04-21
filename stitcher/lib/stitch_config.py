@@ -127,13 +127,13 @@ MUSEUM_CONFIGS = {
         "ruler_template": "General_eBL_photo_ruler.svg",
         "ruler_size_cm": 4.317
     },
-    "Non-eBL Ruler (VAM)": {
+    "General (white background)": {
         "background_color": (255, 255, 255),
         "ruler_type": "svg",
         "ruler_template": "General_External_photo_ruler.svg",
         "ruler_size_cm": 3.248
     },
-    "Black background (Jena)": {
+    "General (black background)": {
         "background_color": (0, 0, 0),
         "ruler_type": "tif",
         "ruler_templates": {

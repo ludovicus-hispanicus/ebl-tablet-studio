@@ -5,8 +5,6 @@ contextBridge.exposeInMainWorld('api', {
   getStitcherConfig: () => ipcRenderer.invoke('get-stitcher-config'),
   saveStitcherConfig: (config) => ipcRenderer.invoke('save-stitcher-config', config),
   verifyStitcherExe: (path) => ipcRenderer.invoke('verify-stitcher-exe', path),
-  autoDetectStitcher: () => ipcRenderer.invoke('auto-detect-stitcher'),
-  selectStitcherExe: () => ipcRenderer.invoke('select-stitcher-exe'),
   loadPicks: (subfolderPath) => ipcRenderer.invoke('load-picks', subfolderPath),
   savePicks: (subfolderPath, picks) => ipcRenderer.invoke('save-picks', subfolderPath, picks),
   exportSelected: (rootFolder, subfolderName, picks, customExportFolder) => ipcRenderer.invoke('export-selected', rootFolder, subfolderName, picks, customExportFolder),
@@ -23,8 +21,10 @@ contextBridge.exposeInMainWorld('api', {
   newProject: (name) => ipcRenderer.invoke('new-project', name),
   selectMeasurementsFile: () => ipcRenderer.invoke('select-measurements-file'),
   selectLogoFile: () => ipcRenderer.invoke('select-logo-file'),
+  selectRulerFile: () => ipcRenderer.invoke('select-ruler-file'),
+  listRulers: () => ipcRenderer.invoke('list-rulers'),
+  getRulerPreview: (path) => ipcRenderer.invoke('get-ruler-preview', path),
   onStitcherProgress: (callback) => ipcRenderer.on('stitcher-progress', (event, data) => callback(data)),
-  offStitcherProgress: () => ipcRenderer.removeAllListeners('stitcher-progress'),
 
 
   // User identity
@@ -41,6 +41,9 @@ contextBridge.exposeInMainWorld('api', {
   scanResults: (rootFolder) => ipcRenderer.invoke('scan-results', rootFolder),
   loadReviewStatus: (rootFolder) => ipcRenderer.invoke('load-review-status', rootFolder),
   saveReviewStatus: (rootFolder, status) => ipcRenderer.invoke('save-review-status', rootFolder, status),
+  loadProjectNotes: (rootFolder) => ipcRenderer.invoke('load-project-notes', rootFolder),
+  saveProjectNotes: (rootFolder, notes) => ipcRenderer.invoke('save-project-notes', rootFolder, notes),
+  getResultMetadata: (path) => ipcRenderer.invoke('get-result-metadata', path),
   getResultThumbnail: (path) => ipcRenderer.invoke('get-result-thumbnail', path),
   revealInExplorer: (path) => ipcRenderer.invoke('reveal-in-explorer', path),
   rotateImage: (path, degrees) => ipcRenderer.invoke('rotate-image', path, degrees),

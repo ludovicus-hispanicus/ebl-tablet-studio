@@ -86,7 +86,7 @@ def get_museum_background_color(museum_selection=None, detected_bg_color=(0, 0, 
     except Exception:
         pass
 
-    if museum_selection is None or museum_selection == "British Museum" or museum_selection == "Black background (Jena)":
+    if museum_selection is None or museum_selection == "British Museum" or museum_selection == "General (black background)":
         return (0, 0, 0)
     else:
 

@@ -21,6 +21,13 @@ def print_final_statistics(start_time, total_ok, total_err, cr2_conv_total, fail
     if total_ok > 0:
         print(f"Average time per object: {int(avg_minutes):02d}m {int(avg_seconds):02d}s")
 
+    try:
+        from lens_correction_hint import report_summary
+        for line in report_summary():
+            print(line)
+    except Exception:
+        pass
+
     if total_err > 0:
         print(f"\n--- FAILED TABLETS ---")
         for obj in failed_objects:

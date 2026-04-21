@@ -46,14 +46,19 @@ function getConfigPath() {
   return path.join(getUserDataDir(), CONFIG_FILE);
 }
 
+const DEFAULT_ACTIVE_PROJECT = 'General (black background)';
+
 function loadStitcherConfig() {
   const configPath = getConfigPath();
-  let config = { stitcherExe: '' };
+  let config = { stitcherExe: '', activeProject: DEFAULT_ACTIVE_PROJECT };
   if (fs.existsSync(configPath)) {
     try {
       config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       if (!config.stitcherExe) {
         config.stitcherExe = config.scriptPath || '';
+      }
+      if (!config.activeProject) {
+        config.activeProject = DEFAULT_ACTIVE_PROJECT;
       }
     } catch (err) {
       console.error('Error loading stitcher config:', err.message);
@@ -94,16 +99,6 @@ function verifyStitcherExe(exePath) {
 }
 
 /**
- * Auto-detect kept for backward compatibility with the existing settings UI.
- * Post-merge, this always returns the bundled path (if it exists).
- */
-function autoDetectStitcherExe() {
-  const bundled = resolveStitcherPath();
-  if (fs.existsSync(bundled)) return bundled;
-  return null;
-}
-
-/**
  * Run the stitcher exe in headless mode.
  *
  * Base args: --headless --root <folder> --json-progress [--tablets <name1> ...]
@@ -115,6 +110,10 @@ function autoDetectStitcherExe() {
  *   addLogo         → --add-logo (flag)
  *   logoPath        → --logo-path <path>
  *   measurements    → --measurements <path>
+ *   institution     → --institution <name>
+ *   creditLine      → --credit-line <text>
+ *   usageTerms      → --usage-terms <text>
+ *   outputType      → --output-type <digital|print|both>
  *
  * onProgress receives log events: { type, message }
  * Returns a promise: { success, exitCode, error? }
@@ -143,6 +142,10 @@ function runStitcherHeadless(exePath, rootFolder, tablets, onProgress, extraArgs
     if (extraArgs.addLogo) args.push('--add-logo');
     if (extraArgs.logoPath) args.push('--logo-path', extraArgs.logoPath);
     if (extraArgs.measurements) args.push('--measurements', extraArgs.measurements);
+    if (extraArgs.institution) args.push('--institution', extraArgs.institution);
+    if (extraArgs.creditLine) args.push('--credit-line', extraArgs.creditLine);
+    if (extraArgs.usageTerms) args.push('--usage-terms', extraArgs.usageTerms);
+    if (extraArgs.outputType) args.push('--output-type', extraArgs.outputType);
 
     if (tablets && tablets.length > 0) {
       args.push('--tablets', ...tablets);
@@ -152,7 +155,9 @@ function runStitcherHeadless(exePath, rootFolder, tablets, onProgress, extraArgs
 
     const proc = spawn(resolved, args, {
       cwd: path.dirname(resolved),
-      env: { ...process.env },
+      // Force UTF-8 for Python's stdout/stderr so check-mark / X / em-dash
+      // characters in log lines don't crash on Windows' cp1252 default.
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
     });
 
     let stdoutBuffer = '';
@@ -202,6 +207,5 @@ module.exports = {
   loadStitcherConfig,
   saveStitcherConfig,
   verifyStitcherExe,
-  autoDetectStitcherExe,
   runStitcherHeadless,
 };

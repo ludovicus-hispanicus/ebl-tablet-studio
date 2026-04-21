@@ -71,8 +71,8 @@ Conclusion: vendored code reproduces upstream to within rembg's intrinsic floati
 - `process_tablets.py` — headless CLI entry point (unchanged from upstream).
 - `assets/` — ruler templates (TIF/SVG), institution logo, project JSONs. **No tablet measurements** — per the Phase B plan, measurements are always user-provided via Settings, never bundled.
 - `tests/` — Iraq Museum ruler-detection test fixtures.
-- `requirements.txt` — Python deps, untouched pending rembg→SAM swap in Step 5.
-- `eBL_Photo_Stitcher.spec` / `eBL_Photo_Stitcher_MacOS.spec` — PyInstaller specs, to be renamed and adapted.
+- `requirements.txt` — Python deps. torch/torchvision dropped; rembg + onnxruntime retained for U2NET auto-extraction.
+- `eBL_Photo_Stitcher.spec` / `eBL_Photo_Stitcher_MacOS.spec` — PyInstaller specs driven by `tools/build-stitcher.js` (npm run build-stitcher).
 
 ## What's intentionally NOT here
 
@@ -83,15 +83,12 @@ Conclusion: vendored code reproduces upstream to within rembg's intrinsic floati
 - `build_executable.bat` — old Windows-only build script, to be replaced by our CI.
 - `.github/workflows/` from upstream — we'll write fresh CI that fits our repo.
 
-## What still runs today
+## What runs today
 
-Nothing from this folder. The Electron app is unchanged; it still bundles the pre-built standalone stitcher exe downloaded from the `ebl-photo-stitcher` repo release.
+The Electron app invokes `resources/stitcher/eBL.Photo.Stitcher.exe`, built from this folder via `npm run build-stitcher` (PyInstaller, specs at the top level). Automatic tablet extraction runs through `lib/object_extractor_rembg.py` (rembg + U2NET + onnxruntime). Interactive SAM segmentation lives in the Electron renamer (`src/main/sam-onnx.js`, unrelated to this folder).
 
-## Next steps (Phase B)
+## Remaining Phase B follow-ups
 
-2. Set up Python venv, verify `process_tablets.py` produces outputs identical to v2.0-rc.16.
-3. Build a local PyInstaller binary from this source; swap it into `resources/stitcher/`.
-4. Move the build into our CI, drop the cross-repo download step.
-5. Replace `lib/object_extractor_rembg.py` with a SAM-ONNX implementation (using the same `resources/models/sam/` ONNX files the renamer's segmentation uses).
-6. Delete `lib/object_extractor_rembg.py`, rename `lib/gui_workflow_runner.py` → `lib/workflow_runner.py`, strip any residual tkinter imports.
-7. Archive the standalone `ebl-photo-stitcher` repo.
+- Move the `npm run build-stitcher` invocation into CI so the bundled `.exe` is rebuilt on pushes to `main`.
+- Rename `lib/gui_workflow_runner.py` → `lib/workflow_runner.py` (cosmetic; the Tkinter GUI is long gone).
+- Archive the standalone [`ebl-photo-stitcher`](https://github.com/ludovicus-hispanicus/ebl-photo-stitcher) repo now that the vendored source is authoritative.

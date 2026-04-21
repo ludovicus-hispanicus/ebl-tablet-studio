@@ -104,7 +104,7 @@ def resize_and_save_ruler_template(
         template_filename = os.path.basename(chosen_digital_ruler_template_path)
         target_physical_width_cm = None
         
-        if museum_selection == "Black background (Jena)":
+        if museum_selection == "General (black background)":
             ruler_constants = RULER_TARGET_PHYSICAL_WIDTHS_CM_JENA
         else:
             ruler_constants = RULER_TARGET_PHYSICAL_WIDTHS_CM_BRITISH_MUSEUM

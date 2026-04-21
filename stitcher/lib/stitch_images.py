@@ -117,14 +117,21 @@ def process_tablet_subfolder(
     object_extraction_background_mode="auto",
     stitched_bg_color=(0, 0, 0),
     custom_layout=None,
+    include_intermediates=True,
+    output_folder_suffix="",
     **kwargs
 ):
     """
     Process all images in a tablet subfolder to create a stitched composite.
 
-    Modified to handle multiple intermediate images.
+    include_intermediates: when False, intermediate views (_ob, _ol, _or, _rl,
+    _rr, _ot2, ...) are skipped — used for the "print" variant which only
+    stitches the six primary views _01–_06.
+    output_folder_suffix: appended to `_Final_TIFF` / `_Final_JPG` so print
+    variants write to `_Final_TIFF_Print/` / `_Final_JPG_Print/`.
     """
-    print(f"  Stitching for tablet: {output_base_name}")
+    variant_label = " (print)" if output_folder_suffix else ""
+    print(f"  Stitching for tablet: {output_base_name}{variant_label}")
 
     view_gap_px_override = kwargs.get('view_gap_px_override', None)
     current_view_gap = STITCH_VIEW_GAP_PX if view_gap_px_override is None else view_gap_px_override
@@ -134,7 +141,7 @@ def process_tablet_subfolder(
         subfolder_path,
         output_base_name,
         STITCH_VIEW_PATTERNS_BASE,
-        include_intermediates=True,
+        include_intermediates=include_intermediates,
         intermediate_suffix_patterns=get_extended_intermediate_suffixes()
     )
     if not loaded_images or loaded_images.get("obverse") is None and (custom_layout is None or custom_layout.get("obverse") is None):
@@ -157,13 +164,15 @@ def process_tablet_subfolder(
 
             gap_pixels = 50
 
-            # Check if measurement record already exists (e.g., from Excel workflow)
+            # Check if measurement record already exists at the main-folder level
+            # (that's where add_measurement_record writes and where the Excel
+            # finalizer reads). Per-subfolder JSONs from older runs are ignored
+            # on purpose — recomputing into the main file is cheap and keeps
+            # the finalizer's input in sync.
             from extract_measurements import measurement_record_exists
-            # Check both subfolder and main folder for existing measurement records
-            record_exists_subfolder = measurement_record_exists(output_base_name, subfolder_path)
             record_exists_main = measurement_record_exists(output_base_name, main_input_folder_path)
-            
-            if record_exists_subfolder or record_exists_main:
+
+            if record_exists_main:
                 print(f"  Measurement record already exists for {output_base_name} (skipping calculation)")
             else:
                 success = add_measurement_record(
@@ -232,7 +241,8 @@ def process_tablet_subfolder(
         output_dpi,
         object_width_cm=obj_width_cm,
         object_length_cm=obj_length_cm,
-        pixels_per_cm=pixels_per_cm
+        pixels_per_cm=pixels_per_cm,
+        output_folder_suffix=output_folder_suffix,
     )
 
     print(f"  Finished processing and stitching for tablet: {output_base_name}")

@@ -21,7 +21,7 @@ except (ImportError, ModuleNotFoundError):
 
 # Collect package metadata that PyInstaller misses
 extra_metadata = []
-for pkg in ['imageio', 'rawpy', 'rembg', 'pillow_heif']:
+for pkg in ['imageio', 'rawpy', 'rembg', 'pymatting', 'pillow_heif', 'onnxruntime', 'scipy', 'numpy', 'opencv-python', 'Pillow']:
     try:
         md = copy_metadata(pkg)
         extra_metadata += md
@@ -39,7 +39,7 @@ for pkg in ['imageio', 'rawpy', 'rembg', 'pillow_heif']:
 block_cipher = None
 
 a = Analysis(
-    ['gui_app.py'],
+    ['process_tablets.py'],
     pathex=['./lib'],
     binaries=[],
     datas=[
@@ -119,5 +119,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='eBL_Logo.ico',
+    icon='../assets/icons/icon.ico',
 )

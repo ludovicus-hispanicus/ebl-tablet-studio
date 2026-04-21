@@ -8,13 +8,17 @@ try:
     LENSFUN_AVAILABLE = True
 except ImportError:
     LENSFUN_AVAILABLE = False
-    print("Warning: lensfunpy library not found. Lens corrections will be skipped.")
-    print("         To enable lens corrections, please install it: pip install lensfunpy")
-    print("         You may also need to install the Lensfun database on your system.")
+
+_LENSFUN_WARNING_EMITTED = False
 
 
 def apply_lens_correction_if_available(raw_image_obj, image_rgb_array):
     if not LENSFUN_AVAILABLE:
+        global _LENSFUN_WARNING_EMITTED
+        if not _LENSFUN_WARNING_EMITTED:
+            _LENSFUN_WARNING_EMITTED = True
+            print("Warning: lensfunpy not available; skipping lens corrections for RAW files. "
+                  "Install with `pip install lensfunpy` + the Lensfun database to enable.")
         return image_rgb_array
     try:
         database = lensfunpy.Database()
@@ -147,6 +151,11 @@ def convert_raw_image_to_tiff(raw_image_input_path, tiff_output_path):
 
             imageio.imwrite(tiff_output_path, processed_rgb_pixels, format='TIFF')
         print(f"    Successfully converted RAW to TIFF: {tiff_output_path}")
+        try:
+            from lens_correction_hint import record_raw_conversion
+            record_raw_conversion(tiff_output_path)
+        except Exception:
+            pass
         return tiff_output_path
     except rawpy.LibRawIOError as e:
         print(

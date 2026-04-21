@@ -27,39 +27,16 @@ def calculate_deviation_percentage(reference_value: float, calculated_value: flo
 
 def load_sippar_reference_data() -> Dict[str, Dict]:
     """
-    Load BM reference measurements from assets/bm_measurements.json.
-    (Historical name kept for backward compatibility.)
+    Legacy stub. The old workflow loaded `assets/bm_measurements.json` — a
+    bundled BM/Sippar ground-truth dataset — to generate a deviation report.
+    That file was dropped in Phase B (see stitcher/README.md), and the
+    deviation report now uses the user-supplied measurements file instead
+    (threaded through `create_comparison_excel(reference_measurements=...)`).
 
-    Returns:
-        Dictionary mapping object IDs to their reference measurements
+    Kept as a no-op so the rarely-triggered fallback-comparison branch in
+    `extract_measurements.add_measurement_record` stays callable.
     """
-    try:
-        script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        bm_path = os.path.join(script_dir, "assets", "bm_measurements.json")
-
-        if not os.path.exists(bm_path):
-            # Try old name as fallback
-            bm_path = os.path.join(script_dir, "assets", "sippar.json")
-            if not os.path.exists(bm_path):
-                print(f"Warning: bm_measurements.json not found at {script_dir}/assets/")
-                return {}
-
-        with open(bm_path, 'r', encoding='utf-8') as f:
-            bm_list = json.load(f)
-
-        bm_dict = {}
-        for item in bm_list:
-            if isinstance(item, dict) and "_id" in item:
-                bm_dict[item["_id"]] = item
-
-        print(f"Loaded {len(bm_dict)} reference measurements from {os.path.basename(bm_path)}")
-        return bm_dict
-
-    except Exception as e:
-        print(f"Error loading BM measurements: {e}")
-        import traceback
-        traceback.print_exc()
-        return {}
+    return {}
 
 
 def load_existing_measurements(output_dir: str = None) -> list:
@@ -89,16 +66,21 @@ def load_existing_measurements(output_dir: str = None) -> list:
         return []
 
 
-def create_comparison_excel(output_dir: str = None, photographer_name: str = None) -> bool:
+def create_comparison_excel(output_dir: str = None, photographer_name: str = None,
+                            reference_measurements: Dict[str, Dict] = None) -> bool:
     """
     Create Excel file with measurement comparisons for measurements that have reference data.
 
     Args:
-        output_dir: Directory to save the Excel file
-        photographer_name: Full photographer name from GUI
+        output_dir: Directory to save the Excel file.
+        photographer_name: Full photographer name from GUI.
+        reference_measurements: Dict keyed by tablet ID, with `width` / `length`
+            fields (in cm) from the user-supplied measurements file. When None
+            or empty, the deviation report is skipped silently — nothing to
+            compare against.
 
     Returns:
-        True if Excel file was created successfully, False otherwise
+        True if Excel file was created successfully, False otherwise.
     """
     try:
         if pd is None:
@@ -115,7 +97,10 @@ def create_comparison_excel(output_dir: str = None, photographer_name: str = Non
             print("No measurements found in calculated_measurements.json")
             return False
 
-        sippar_data = load_sippar_reference_data()
+        reference = reference_measurements or {}
+        if not reference:
+            print("No reference measurements supplied; skipping deviation report.")
+            return False
 
         comparisons = []
 
@@ -124,7 +109,7 @@ def create_comparison_excel(output_dir: str = None, photographer_name: str = Non
             if not object_id:
                 continue
 
-            if object_id not in sippar_data:
+            if object_id not in reference:
                 continue
 
             calc_width = measurement.get("width", {}).get("value", 0) if isinstance(
@@ -132,7 +117,7 @@ def create_comparison_excel(output_dir: str = None, photographer_name: str = Non
             calc_length = measurement.get("length", {}).get("value", 0) if isinstance(
                 measurement.get("length"), dict) else measurement.get("length", 0)
 
-            ref_data = sippar_data[object_id]
+            ref_data = reference[object_id]
             ref_width = ref_data.get("width", 0)
             ref_length = ref_data.get("length", 0)
 
@@ -187,22 +172,25 @@ def create_comparison_excel(output_dir: str = None, photographer_name: str = Non
         return False
 
 
-def finalize_measurements_with_comparison(output_dir: str = None, photographer_name: str = None) -> bool:
+def finalize_measurements_with_comparison(output_dir: str = None, photographer_name: str = None,
+                                          reference_measurements: Dict[str, Dict] = None) -> bool:
     """
-    Finalize the measurements process by creating Excel output.
-    Call this at the end of your processing workflow.
+    Finalize the measurements process by creating the deviation Excel.
 
     Args:
-        output_dir: Directory to save output files
-        photographer_name: Full photographer name from GUI
+        output_dir: Directory containing `calculated_measurements.json` and
+            where the comparison .xlsx will be written.
+        photographer_name: Full photographer name from GUI (used in filename).
+        reference_measurements: Dict keyed by tablet ID with ground-truth
+            `width` / `length` (cm). Typically the `measurements_dict` loaded
+            from the user's `--measurements` file. When None / empty, the
+            comparison is skipped silently.
 
     Returns:
         True if successful, False otherwise
     """
     try:
-
-        excel_created = create_comparison_excel(output_dir, photographer_name)
-
+        create_comparison_excel(output_dir, photographer_name, reference_measurements)
         return True
 
     except Exception as e:

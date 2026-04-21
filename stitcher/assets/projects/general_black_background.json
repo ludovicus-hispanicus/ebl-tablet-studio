@@ -1,5 +1,5 @@
 {
-  "name": "Black background (Jena)",
+  "name": "General (black background)",
   "builtin": true,
   "background_color": [0, 0, 0],
   "ruler_mode": "adaptive_set",
@@ -15,10 +15,13 @@
   },
   "detection_method": "general",
   "ruler_position_locked": false,
-  "fixed_ruler_position": "top",
+  "fixed_ruler_position": "bottom",
   "institution": "",
   "credit_line": "",
+  "usage_terms": "",
   "logo_enabled": false,
   "logo_path": "",
-  "measurements_file": ""
+  "measurements_file": "",
+  "output_type": "digital",
+  "ruler_set": ""
 }

@@ -19,18 +19,29 @@ function getUserProjectsDir() {
 }
 
 function getBuiltinProjectsDir(stitcherExePath) {
-  const p = stitcherExePath || resolveStitcherPath();
-  if (!p) return null;
-  // Built-in projects are in assets/projects/ next to the stitcher exe
-  const stitcherDir = path.dirname(p);
-  // For PyInstaller one-file: assets are extracted to a temp dir at runtime,
-  // so this returns null for the bundled stitcher. User projects still work.
-  // TODO(Phase B): add `process_tablets.py --list-projects` JSON subcommand so
-  // built-in projects can be queried from the running stitcher exe.
-  const candidates = [
-    path.join(stitcherDir, 'assets', 'projects'),
-    path.join(stitcherDir, '..', 'assets', 'projects'), // macOS .app bundle
-  ];
+  // Search in order:
+  //   1. assets/projects next to the stitcher .exe (packaged builds where
+  //      stitcher/assets is shipped as extraResources alongside the .exe)
+  //   2. dev source tree: <repo>/stitcher/assets/projects/
+  //   3. packaged resources fallback: process.resourcesPath/stitcher/assets/projects
+  //   4. macOS .app bundle layout
+  // PyInstaller one-file bundles extract assets to a temp dir at runtime,
+  // so they can't be read directly from the .exe path — but the dev and
+  // extraResources paths cover both development and packaged builds.
+  const candidates = [];
+  const stitcherExe = stitcherExePath || resolveStitcherPath();
+  if (stitcherExe) {
+    const stitcherDir = path.dirname(stitcherExe);
+    candidates.push(path.join(stitcherDir, 'assets', 'projects'));
+    candidates.push(path.join(stitcherDir, '..', 'assets', 'projects'));
+  }
+  // Dev: stitcher source is at <repo>/stitcher/assets/projects/
+  candidates.push(path.join(__dirname, '..', '..', 'stitcher', 'assets', 'projects'));
+  // Packaged: extraResources ships stitcher/assets to resources/stitcher/assets/
+  if (process.resourcesPath) {
+    candidates.push(path.join(process.resourcesPath, 'stitcher', 'assets', 'projects'));
+  }
+
   for (const dir of candidates) {
     if (fs.existsSync(dir)) return dir;
   }
@@ -135,10 +146,13 @@ function defaultNewProject(name) {
     ruler_size_cm: 5.0,
     detection_method: 'general',
     ruler_position_locked: false,
-    fixed_ruler_position: 'top',
+    fixed_ruler_position: 'bottom',
+    output_type: 'digital',
+    ruler_set: '',
     photographer: '',
     institution: '',
     credit_line: '',
+    usage_terms: '',
     logo_enabled: false,
     logo_path: '',
     measurements_file: '',

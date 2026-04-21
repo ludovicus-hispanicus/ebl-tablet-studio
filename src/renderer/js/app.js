@@ -93,10 +93,9 @@ document.getElementById('viewer-pick').addEventListener('click', () => {
 });
 document.getElementById('viewer-delete').addEventListener('click', deleteCurrentImage);
 
-// Sidebar rotation controls (still work, use selection)
-document.getElementById('btn-rot-ccw').addEventListener('click', () => rotateSelected(-90));
-document.getElementById('btn-rot-180').addEventListener('click', () => rotateSelected(180));
-document.getElementById('btn-rot-cw').addEventListener('click', () => rotateSelected(90));
+// Rotation keyboard shortcuts still work (Shift+Left/Right/Down via onKeyDown).
+// Sidebar rotation buttons were removed — floating per-thumbnail controls and
+// the keyboard shortcuts cover the same workflow.
 
 document.addEventListener('keydown', onKeyDown);
 
@@ -178,6 +177,10 @@ document.addEventListener('mouseup', () => {
 // Tabs only change the right-panel content. The only tab that swaps the thumbnail
 // grid is Results (to show stitched results). Leaving Results restores the
 // image thumbnails for the currently selected tablet.
+document.querySelectorAll('.result-view-tab').forEach(btn => {
+  btn.addEventListener('click', () => setResultView(btn.dataset.resultView));
+});
+
 document.querySelectorAll('.right-tab').forEach(tab => {
   tab.addEventListener('click', () => {
     const newTab = tab.dataset.tab;
@@ -228,10 +231,46 @@ document.getElementById('result-notes').addEventListener('input', () => {
   notesSaveTimer = setTimeout(saveCurrentNotes, 500);
 });
 
+let dashboardNotesSaveTimer = null;
+document.getElementById('dashboard-notes').addEventListener('input', () => {
+  clearTimeout(dashboardNotesSaveTimer);
+  dashboardNotesSaveTimer = setTimeout(saveDashboardNotes, 500);
+});
+
 // Settings dialog
 document.getElementById('btn-settings').addEventListener('click', openSettings);
+
+document.querySelectorAll('.settings-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    const name = tab.dataset.settingsTab;
+    document.querySelectorAll('.settings-tab').forEach(t => t.classList.toggle('active', t === tab));
+    document.querySelectorAll('.settings-tab-panel').forEach(p => {
+      p.classList.toggle('active', p.id === `settings-tab-${name}`);
+    });
+  });
+});
+
+// Background swatch picker — clicking a swatch updates the hidden input
+// and toggles the selected state. saveSettings reads #setting-background
+// unchanged, so no save-side change needed.
+document.querySelectorAll('.bg-swatch-setting').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const value = btn.dataset.bg;
+    document.getElementById('setting-background').value = value;
+    document.querySelectorAll('.bg-swatch-setting').forEach(b =>
+      b.classList.toggle('selected', b === btn));
+  });
+});
 document.getElementById('settings-close').addEventListener('click', closeSettings);
 document.getElementById('settings-save').addEventListener('click', saveSettings);
+document.getElementById('setting-new-project').addEventListener('click', showNewProjectPrompt);
+document.getElementById('setting-new-project-cancel').addEventListener('click', hideNewProjectPrompt);
+document.getElementById('setting-new-project-confirm').addEventListener('click', createNewProject);
+document.getElementById('setting-new-project-name').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); createNewProject(); }
+  else if (e.key === 'Escape') { e.preventDefault(); hideNewProjectPrompt(); }
+});
+document.getElementById('setting-delete-project').addEventListener('click', deleteSelectedProject);
 document.getElementById('setting-browse-measurements').addEventListener('click', async () => {
   const path = await window.api.selectMeasurementsFile();
   if (path) document.getElementById('setting-measurements').value = path;
@@ -246,6 +285,249 @@ document.getElementById('setting-browse-logo').addEventListener('click', async (
 document.getElementById('setting-clear-logo').addEventListener('click', () => {
   document.getElementById('setting-logo-path').value = '';
 });
+document.getElementById('setting-browse-ruler').addEventListener('click', async () => {
+  const p = await window.api.selectRulerFile();
+  if (p) {
+    document.getElementById('setting-ruler-file').value = `file:${p}`;
+    await populateRulerGrid();
+  }
+});
+document.getElementById('setting-clear-ruler').addEventListener('click', async () => {
+  document.getElementById('setting-ruler-file').value = '';
+  await populateRulerGrid();
+});
+document.getElementById('setting-open-ruler').addEventListener('click', async () => {
+  document.getElementById('ruler-overlay').classList.remove('hidden');
+  await populateRulerGrid();
+});
+document.getElementById('ruler-close').addEventListener('click', closeRulerOverlay);
+document.getElementById('ruler-done').addEventListener('click', closeRulerOverlay);
+document.getElementById('ruler-overlay').addEventListener('click', (e) => {
+  if (e.target.id === 'ruler-overlay') closeRulerOverlay();
+});
+function closeRulerOverlay() {
+  document.getElementById('ruler-overlay').classList.add('hidden');
+}
+
+// Builds the ruler grid grouped by the new scheme:
+//
+//   General           — general-purpose rulers (freely usable)
+//     • General External photo ruler
+//     • BM scale bars (donated by the British Museum for free use)
+//   British Museum    — reserved for future BM-specific rulers
+//   Iraq Museum       — IM photo ruler
+//   Projects          — eBL, Sippar Library, Jena (black background)
+//
+// Scale-bar sets (BM, Black/Jena) present BOTH:
+//   • a "Use whole set (auto-sized)" card that selects the set and lets
+//     the stitcher auto-pick 1/2/5 cm based on tablet width
+//   • individual 1/2/5 cm cards that force a specific size
+//
+// Selection is stored in the hidden #setting-ruler-file input as either
+// `file:<abs-path>` or `set:<group-id>`. saveSettings parses it into
+// project.ruler_file / project.ruler_set.
+async function populateRulerGrid() {
+  const grid = document.getElementById('ruler-grid');
+  const input = document.getElementById('setting-ruler-file');
+  grid.innerHTML = '<div class="ruler-loading">Loading\u2026</div>';
+
+  const { builtin = [] } = await window.api.listRulers();
+  const selected = (input.value || '').trim();
+
+  // Partition by group
+  const byGroup = { general: [], bm_donated: [], black_jena: [],
+                    iraq_museum: [], project_ebl: [], project_sippar: [] };
+  for (const r of builtin) {
+    if (byGroup[r.group]) byGroup[r.group].push({ ...r, kind: 'builtin' });
+    else byGroup.general.push({ ...r, kind: 'builtin' });
+  }
+
+  // Treat a legacy raw-path value (no "file:" / "set:" prefix) as a file path
+  const legacyFile = (!selected.includes(':') && selected) ? selected : null;
+  let selectedFile = selected.startsWith('file:') ? selected.slice(5) : legacyFile;
+  const selectedSet = selected.startsWith('set:') ? selected.slice(4) : null;
+
+  // The built-in stitcher project JSONs store bare filenames (e.g.
+  // "General_External_photo_ruler.svg") rather than absolute paths.
+  // If the saved value is a bare name, match it against the built-ins by
+  // basename and promote it to the full path so it matches a built-in card
+  // (and `fs.existsSync` works for the preview).
+  const basenameOf = (p) => (p || '').replace(/\\/g, '/').split('/').pop();
+  if (selectedFile && !selectedFile.includes('/') && !selectedFile.includes('\\')) {
+    const match = builtin.find(r => basenameOf(r.path) === selectedFile);
+    if (match) selectedFile = match.path;
+  }
+
+  // Append custom uploaded ruler (not matching any built-in) under General
+  const isBuiltinSelected = selectedFile && builtin.some(r => r.path === selectedFile);
+  if (selectedFile && !isBuiltinSelected) {
+    const name = basenameOf(selectedFile) || selectedFile;
+    byGroup.general.push({ id: 'custom', label: name, path: selectedFile, preview: selectedFile, kind: 'custom' });
+  }
+
+  // Visual-group layout:
+  //   General         — External photo ruler + Black-background scale bars
+  //                     (formerly "Jena"; now treated as general-purpose)
+  //   British Museum  — BM_*_scale bars (they belong to the BM)
+  //   Iraq Museum     — IM photo ruler
+  //   Projects        — eBL, Sippar Library
+  const sections = [
+    {
+      title: 'General', note: null,
+      items: byGroup.general,
+      setsBefore: [], setsAfter: byGroup.black_jena.length ? [
+        { setId: 'black_jena', label: 'Black background scale bars (auto-sized)',
+          sample: byGroup.black_jena.find(r => r.sortKey === 5) || byGroup.black_jena[0],
+          badge: null },
+      ] : [],
+      extras: byGroup.black_jena,
+      extrasNote: byGroup.black_jena.length
+        ? 'Black-background scale bars — size (1 / 2 / 5 cm) is auto-selected based on tablet width. Pick one below only to force a specific size.'
+        : null,
+    },
+    {
+      title: 'British Museum',
+      note: 'Scale bars donated by the British Museum to be used freely.',
+      items: [],
+      setsBefore: [], setsAfter: byGroup.bm_donated.length ? [
+        { setId: 'bm_donated', label: 'BM scale bars (auto-sized)',
+          sample: byGroup.bm_donated.find(r => r.sortKey === 5) || byGroup.bm_donated[0],
+          badge: null },
+      ] : [],
+      extras: byGroup.bm_donated,
+      extrasNote: byGroup.bm_donated.length
+        ? 'Size (1 / 2 / 5 cm) is auto-selected based on tablet width. Pick one below only to force a specific size.'
+        : null,
+    },
+    {
+      title: 'Iraq Museum', note: null,
+      items: byGroup.iraq_museum, setsBefore: [], setsAfter: [],
+      extras: [], extrasNote: null,
+    },
+    {
+      title: 'Projects', note: null,
+      items: [...byGroup.project_ebl, ...byGroup.project_sippar],
+      setsBefore: [], setsAfter: [],
+      extras: [], extrasNote: null,
+    },
+  ];
+
+  const total = builtin.length + (selectedFile && !isBuiltinSelected ? 1 : 0);
+  if (total === 0) {
+    grid.innerHTML = '<div class="ruler-loading">No rulers found. Upload a custom one below.</div>';
+    return;
+  }
+
+  grid.innerHTML = '';
+
+  const makeCard = (r, opts = {}) => {
+    const card = document.createElement('div');
+    const isSelected = opts.setId
+      ? (selectedSet === opts.setId)
+      : (r.path === selectedFile);
+    card.className = 'ruler-card' + (isSelected ? ' selected' : '');
+    card.dataset.selection = opts.setId ? `set:${opts.setId}` : `file:${r.path}`;
+    card.title = opts.setId ? opts.setId : r.path;
+
+    const img = document.createElement('img');
+    img.alt = r.label;
+    card.appendChild(img);
+
+    const name = document.createElement('div');
+    name.className = 'ruler-card-name';
+    name.textContent = opts.setLabel || r.label;
+    card.appendChild(name);
+
+    if (r.kind === 'custom') {
+      const badge = document.createElement('div');
+      badge.className = 'ruler-card-badge';
+      badge.textContent = 'Custom';
+      card.appendChild(badge);
+    } else if (opts.badge) {
+      const badge = document.createElement('div');
+      badge.className = 'ruler-card-badge';
+      badge.textContent = opts.badge;
+      card.appendChild(badge);
+    } else if (opts.setId) {
+      const badge = document.createElement('div');
+      badge.className = 'ruler-card-badge';
+      badge.textContent = 'Auto-sized';
+      card.appendChild(badge);
+    }
+
+    card.addEventListener('click', () => {
+      input.value = card.dataset.selection;
+      grid.querySelectorAll('.ruler-card').forEach(c => c.classList.toggle('selected', c === card));
+    });
+
+    (async () => {
+      const src = r.preview || r.path;
+      const dataUrl = await window.api.getRulerPreview(src);
+      if (dataUrl) {
+        img.src = dataUrl;
+      } else {
+        console.warn('[ruler preview] null for', src, 'label=', r.label);
+      }
+      img.onerror = () => console.warn('[ruler preview] <img> failed for', r.label, 'src starts with', (img.src || '').slice(0, 80));
+    })();
+
+    return card;
+  };
+
+  for (const section of sections) {
+    const hasContent = section.items.length > 0 ||
+                       section.setsBefore.length > 0 ||
+                       section.setsAfter.length > 0 ||
+                       section.extras.length > 0 ||
+                       !!section.note;
+    if (!hasContent) continue;
+
+    const sec = document.createElement('div');
+    sec.className = 'ruler-group';
+
+    const header = document.createElement('div');
+    header.className = 'ruler-group-title';
+    header.textContent = section.title;
+    sec.appendChild(header);
+
+    if (section.note) {
+      const noteEl = document.createElement('div');
+      noteEl.className = 'ruler-group-note';
+      noteEl.textContent = section.note;
+      sec.appendChild(noteEl);
+    }
+
+    // Primary grid: individual items + "whole set" cards
+    const inner = document.createElement('div');
+    inner.className = 'ruler-group-grid';
+    for (const s of section.setsBefore) {
+      if (!s.sample) continue;
+      inner.appendChild(makeCard(s.sample, { setId: s.setId, setLabel: s.label, badge: s.badge }));
+    }
+    for (const r of section.items) inner.appendChild(makeCard(r));
+    for (const s of section.setsAfter) {
+      if (!s.sample) continue;
+      inner.appendChild(makeCard(s.sample, { setId: s.setId, setLabel: s.label, badge: s.badge }));
+    }
+    if (inner.children.length > 0) sec.appendChild(inner);
+
+    // Secondary: size-override cards for the scale-bar set (same group)
+    if (section.extras && section.extras.length > 0) {
+      if (section.extrasNote) {
+        const noteEl = document.createElement('div');
+        noteEl.className = 'ruler-group-note';
+        noteEl.textContent = section.extrasNote;
+        sec.appendChild(noteEl);
+      }
+      const extrasGrid = document.createElement('div');
+      extrasGrid.className = 'ruler-group-grid ruler-group-grid-extras';
+      for (const r of section.extras) extrasGrid.appendChild(makeCard(r));
+      sec.appendChild(extrasGrid);
+    }
+
+    grid.appendChild(sec);
+  }
+}
 document.getElementById('settings-overlay').addEventListener('click', (e) => {
   if (e.target.id === 'settings-overlay') closeSettings();
 });
@@ -340,16 +622,39 @@ function buildTreeView() {
   buildSourceTree();
 }
 
-function buildSourceTree() {
+async function buildSourceTree() {
   const treeList = document.getElementById('tree-list');
   treeList.innerHTML = '';
   document.getElementById('tree-header').textContent = 'Folders';
+
+  // Cross-reference against the export folder so picker rows can show
+  // "picked / total" and a ✓ when the tablet has been exported. The scan is
+  // cheap (readdir + image-extension filter per subfolder) and runs once per
+  // tree build; we silently fall back to no-export-info on error.
+  //
+  // The renamer's export step normalizes "Si 41" → "Si.41" on disk (see
+  // stitcher/lib/workflow_cleanup.py:normalize_subfolder_names), so we apply
+  // the same normalization to both sides before matching.
+  const normalizeTabletId = (name) => (name || '').replace(/(\w+)\s+(\d+)/g, '$1.$2');
+  const exportBase = customExportFolder || (state.rootFolder ? state.rootFolder + '/_Selected' : null);
+  const exportedCounts = new Map();
+  if (exportBase) {
+    try {
+      const exported = await window.api.scanSelectedFolder(exportBase);
+      for (const f of exported) exportedCounts.set(normalizeTabletId(f.name), f.imageCount || 0);
+    } catch { /* ignore — exportBase may not exist yet */ }
+  }
 
   state.subfolders.forEach((sub, idx) => {
     const item = document.createElement('div');
     item.className = 'tree-item';
     item.dataset.index = idx;
-    item.innerHTML = `${sub.name}<span class="tree-count">(${sub.imageCount})</span>`;
+    const expCount = exportedCounts.get(normalizeTabletId(sub.name)) || 0;
+    const countText = expCount > 0
+      ? `(${expCount}/${sub.imageCount})`
+      : `(${sub.imageCount})`;
+    const check = expCount > 0 ? '<span class="tree-exported-check" title="Exported">\u2713</span>' : '';
+    item.innerHTML = `<span class="tree-name">${sub.name}</span><span class="tree-count">${countText}</span>${check}`;
     item.addEventListener('click', () => {
       state.currentIndex = idx;
       loadCurrentSubfolder();
@@ -385,6 +690,9 @@ function navigateSubfolder(direction) {
 async function loadCurrentSubfolder() {
   const sub = state.subfolders[state.currentIndex];
   if (!sub) return;
+  // Exit the single-image viewer when switching folders — otherwise the
+  // viewer stays open pointing at a stale image from the previous folder.
+  if (isViewerOpen()) exitViewerMode();
   const total = state.subfolders.length;
 
   dom.subfolderInfo.textContent = `${sub.name}  (${state.currentIndex + 1} / ${total})`;
@@ -805,7 +1113,8 @@ function onKeyDown(e) {
   const inInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';
   if (inInput && e.key !== 'Escape') return;
 
-  // Close overlays on Escape
+  // Close overlays on Escape. Order matters: innermost overlay first so a
+  // stacked overlay (e.g. ruler inside settings) dismisses the top layer.
   if (e.key === 'Escape') {
     if (!document.getElementById('result-preview-overlay').classList.contains('hidden')) { closeResultPreview(); return; }
     if (isViewerOpen()) {
@@ -814,6 +1123,8 @@ function onKeyDown(e) {
       if (previewTool.active) { setActiveTool(previewTool.active); e.preventDefault(); return; }
       exitViewerMode(); return;
     }
+    if (!document.getElementById('ruler-overlay').classList.contains('hidden')) { closeRulerOverlay(); e.preventDefault(); return; }
+    if (!document.getElementById('settings-overlay').classList.contains('hidden')) { closeSettings(); e.preventDefault(); return; }
     if (!document.getElementById('help-overlay').classList.contains('hidden')) { toggleHelp(); return; }
   }
 
@@ -1155,9 +1466,18 @@ function onResultWheel(e) {
   e.preventDefault();
 
   const overlay = document.getElementById('result-preview-overlay');
-  const rect = overlay.getBoundingClientRect();
-  const cx = e.clientX - rect.left;
-  const cy = e.clientY - rect.top;
+  const img = document.getElementById('result-preview-image');
+  if (!img) return;
+
+  // The image is flex-centered in the overlay and has transform-origin: 0 0,
+  // so the scaling origin is the image's layout top-left. Cursor coordinates
+  // for the zoom-around-cursor math must be relative to that point, not the
+  // overlay's top-left — otherwise zoom drifts toward the left edge.
+  const ov = overlay.getBoundingClientRect();
+  const imgLayoutLeft = ov.left + (ov.width - img.offsetWidth) / 2;
+  const imgLayoutTop = ov.top + (ov.height - img.offsetHeight) / 2;
+  const cx = e.clientX - imgLayoutLeft;
+  const cy = e.clientY - imgLayoutTop;
 
   const oldScale = resultZoom.scale;
   const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
@@ -1473,7 +1793,20 @@ const resultsState = {
   selectedResult: null,
   reviewStatus: {},
   hasResults: false,
+  view: 'dashboard',
 };
+
+function setResultView(view) {
+  if (view !== 'dashboard' && view !== 'detail') return;
+  resultsState.view = view;
+  const dashboardEl = document.getElementById('result-view-dashboard');
+  const detailEl = document.getElementById('result-view-detail');
+  if (dashboardEl) dashboardEl.classList.toggle('hidden', view !== 'dashboard');
+  if (detailEl) detailEl.classList.toggle('hidden', view !== 'detail');
+  document.querySelectorAll('.result-view-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.resultView === view);
+  });
+}
 
 let activeTab = 'structure';
 
@@ -1528,6 +1861,14 @@ async function loadResults() {
     resultsState.reviewStatus = await window.api.loadReviewStatus(resultsRoot);
   }
 
+  try {
+    const projectNotes = await window.api.loadProjectNotes(resultsRoot);
+    const dashNotesEl = document.getElementById('dashboard-notes');
+    if (dashNotesEl) dashNotesEl.value = projectNotes?.notes || '';
+  } catch (err) {
+    console.error('loadProjectNotes failed:', err);
+  }
+
   updateResultsTab();
   updateTreeStatusIcons();
 }
@@ -1553,7 +1894,8 @@ function showResultThumbnails() {
 
   for (let i = 0; i < resultsState.results.length; i++) {
     const result = resultsState.results[i];
-    const review = resultsState.reviewStatus[result.name];
+    const rawReview = resultsState.reviewStatus[result.name];
+    const review = getEffectiveReview(rawReview, result.variant);
     const statusClass = review?.status ? ` ${review.status}` : '';
 
     const card = document.createElement('div');
@@ -1574,11 +1916,23 @@ function showResultThumbnails() {
     name.textContent = result.name;
     card.appendChild(name);
 
+    if (result.variant === 'print') {
+      card.classList.add('variant-print');
+      const chip = document.createElement('div');
+      chip.className = 'result-variant-chip';
+      chip.textContent = 'Print';
+      card.appendChild(chip);
+    }
+
     card.addEventListener('click', () => {
       resultsState.currentIndex = i;
       resultsState.selectedResult = result;
       updateResultSelection();
       showResultNotes(result);
+      showResultMetadata(result);
+      setResultView('detail');
+      const emptyEl = document.getElementById('detail-empty');
+      if (emptyEl) emptyEl.classList.add('hidden');
     });
 
     card.addEventListener('dblclick', () => {
@@ -1602,8 +1956,16 @@ function showResultThumbnails() {
 
   // Select current
   updateResultSelection();
-  if (resultsState.results[resultsState.currentIndex]) {
-    showResultNotes(resultsState.results[resultsState.currentIndex]);
+  const current = resultsState.results[resultsState.currentIndex];
+  if (current) {
+    showResultNotes(current);
+  } else {
+    const notesEl = document.getElementById('result-notes');
+    if (notesEl) {
+      notesEl.value = '';
+      notesEl.disabled = true;
+      notesEl.placeholder = 'Select a tablet thumbnail to add notes...';
+    }
   }
 }
 
@@ -1617,7 +1979,105 @@ function updateResultSelection() {
 
 function showResultNotes(result) {
   const review = resultsState.reviewStatus[result.name] || {};
-  document.getElementById('result-notes').value = review.notes || '';
+  const notesEl = document.getElementById('result-notes');
+  notesEl.value = review.notes || '';
+  notesEl.disabled = false;
+  notesEl.placeholder = `Notes for ${result.name}...`;
+  const emptyEl = document.getElementById('detail-empty');
+  if (emptyEl) emptyEl.classList.add('hidden');
+}
+
+let metadataReqId = 0;
+function formatBytes(n) {
+  if (!n && n !== 0) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+async function showResultMetadata(result) {
+  const el = document.getElementById('result-metadata');
+  if (!el) return;
+  const reqId = ++metadataReqId;
+  el.classList.remove('hidden');
+  el.innerHTML = `<div class="meta-loading">Loading metadata\u2026</div>`;
+
+  const meta = await window.api.getResultMetadata(result.jpgPath);
+  if (reqId !== metadataReqId) return;
+
+  const fileRows = [];
+  fileRows.push(['File', `${result.name}.jpg`]);
+  if (meta.width && meta.height) fileRows.push(['Dimensions', `${meta.width} \u00d7 ${meta.height} px`]);
+  if (meta.sizeBytes) fileRows.push(['Size', formatBytes(meta.sizeBytes)]);
+  if (meta.format) fileRows.push(['Format', meta.format.toUpperCase()]);
+  if (meta.modifiedAt) fileRows.push(['Modified', new Date(meta.modifiedAt).toLocaleString()]);
+
+  const LABELS = {
+    // EXIF
+    Make: 'Make', Model: 'Model', Software: 'Software',
+    Artist: 'Artist', Copyright: 'Copyright',
+    ImageDescription: 'Image Description',
+    DateTimeOriginal: 'Date Taken', DateTime: 'Date Modified',
+    XResolution: 'X Resolution', YResolution: 'Y Resolution',
+    ResolutionUnit: 'Resolution Unit',
+    // XMP (Dublin Core + others)
+    title: 'Title (dc)', creator: 'Creator (dc)', description: 'Description (dc)',
+    rights: 'Rights (dc)', subject: 'Subject / Keywords (dc)',
+    identifier: 'Identifier (dc)', publisher: 'Publisher (dc)',
+    date: 'Date (dc)', format: 'Format (dc)', type: 'Type (dc)',
+    CreatorTool: 'Creator Tool (xmp)', CreateDate: 'Create Date (xmp)',
+    ModifyDate: 'Modify Date (xmp)', MetadataDate: 'Metadata Date (xmp)',
+    Marked: 'Marked (xmpRights)', UsageTerms: 'Usage Terms (xmpRights)',
+    WebStatement: 'Web Statement (xmpRights)',
+    Credit: 'Credit (photoshop)', Source: 'Source (photoshop)',
+    Headline: 'Headline (photoshop)', Instructions: 'Instructions (photoshop)',
+    ObjectWidthCm: 'Object Width (ebl)', ObjectLengthCm: 'Object Length (ebl)',
+    PixelsPerCm: 'Pixels / cm (ebl)',
+    // IPTC
+    Byline: 'Byline', BylineTitle: 'Byline Title',
+    CopyrightNotice: 'Copyright Notice', Caption: 'Caption',
+    Keywords: 'Keywords', ObjectName: 'Object Name',
+  };
+
+  const renderRow = ([k, v]) =>
+    `<div class="meta-row"><span class="meta-key">${escapeHtml(k)}</span><span class="meta-val">${escapeHtml(v)}</span></div>`;
+
+  const renderSection = (label, rows) => rows.length ? `
+    <div class="meta-section-label">${escapeHtml(label)}</div>
+    <div class="meta-section">${rows.map(renderRow).join('')}</div>
+  ` : '';
+
+  const sectionRows = (obj) => Object.entries(obj).map(([k, v]) => [LABELS[k] || k, String(v)]);
+
+  const parts = [];
+  parts.push(renderSection('File', fileRows));
+
+  if (meta.sections) {
+    for (const name of ['EXIF', 'XMP', 'IPTC']) {
+      const block = meta.sections[name];
+      if (block && Object.keys(block).length > 0) {
+        parts.push(renderSection(name, sectionRows(block)));
+      }
+    }
+  }
+
+  // Diagnostic footer: only visible if exifr returned nothing or erred out,
+  // so we can see what's actually being parsed.
+  if (!meta.sections) {
+    if (meta._exifrError) {
+      parts.push(`<div class="meta-section-label">exifr error</div>
+        <div class="meta-section"><div class="meta-val">${escapeHtml(meta._exifrError)}</div></div>`);
+    } else if (meta._rawKeys) {
+      parts.push(`<div class="meta-section-label">Raw keys (no classification matched)</div>
+        <div class="meta-section"><div class="meta-val">${escapeHtml(meta._rawKeys.join(', ') || '(empty)')}</div></div>`);
+    } else {
+      parts.push(`<div class="meta-section-label">No metadata found</div>`);
+    }
+  }
+
+  el.innerHTML = parts.join('');
 }
 
 // Result preview overlay
@@ -1759,11 +2219,14 @@ const STATUS_OPTIONS = [
 ];
 
 function updateResultSummary() {
-  const statuses = Object.values(resultsState.reviewStatus);
-  const revCount = statuses.filter(r => r.status === 'revision').length;
-  const updCount = statuses.filter(r => r.status === 'updated').length;
-  const sentCount = statuses.filter(r => r.status === 'sent').length;
-  const finCount = statuses.filter(r => r.status === 'finished').length;
+  // Count per-result (variant-aware) so a tablet with different statuses on
+  // its digital vs. print variants contributes one tick per variant.
+  const effective = resultsState.results.map(r =>
+    getEffectiveReview(resultsState.reviewStatus[r.name], r.variant));
+  const revCount = effective.filter(r => r.status === 'revision').length;
+  const updCount = effective.filter(r => r.status === 'updated').length;
+  const sentCount = effective.filter(r => r.status === 'sent').length;
+  const finCount = effective.filter(r => r.status === 'finished').length;
   const parts = [`${resultsState.results.length} results`];
   if (finCount) parts.push(`${finCount} finished`);
   if (sentCount) parts.push(`${sentCount} sent`);
@@ -1794,6 +2257,17 @@ async function saveCurrentNotes() {
 
   await window.api.saveReviewStatus(getResultsRoot(), resultsState.reviewStatus);
   setStatus(`Notes saved for ${result.name}.`);
+}
+
+async function saveDashboardNotes() {
+  if (!state.rootFolder) return;
+  const notes = document.getElementById('dashboard-notes').value;
+  try {
+    await window.api.saveProjectNotes(getResultsRoot(), notes);
+    setStatus('General notes saved.');
+  } catch (err) {
+    console.error('saveProjectNotes failed:', err);
+  }
 }
 
 function updateTreeStatusIcons() {
@@ -2014,15 +2488,37 @@ async function loadProjectList(selectName) {
   const select = document.getElementById('setting-project-select');
   select.innerHTML = '';
 
-  for (const p of projects) {
+  // Split "General (...)" projects into one optgroup and museum/institution
+  // projects into another. <optgroup> renders a horizontal separator with
+  // a label — the cleanest native way to divide a <select>.
+  const general = projects.filter(p => /^general\b/i.test(p.name));
+  const museums = projects.filter(p => !/^general\b/i.test(p.name));
+
+  const makeOpt = (p) => {
     const opt = document.createElement('option');
     opt.value = p.name;
-    opt.textContent = p.name + (p.builtin ? '' : ' (custom)');
-    select.appendChild(opt);
+    opt.textContent = p.name;
+    return opt;
+  };
+
+  if (general.length > 0) {
+    const g = document.createElement('optgroup');
+    g.label = 'General';
+    for (const p of general) g.appendChild(makeOpt(p));
+    select.appendChild(g);
+  }
+  if (museums.length > 0) {
+    const g = document.createElement('optgroup');
+    g.label = 'Projects';
+    for (const p of museums) g.appendChild(makeOpt(p));
+    select.appendChild(g);
   }
 
+  const DEFAULT_PROJECT = 'General (black background)';
   if (selectName && projects.some(p => p.name === selectName)) {
     select.value = selectName;
+  } else if (projects.some(p => p.name === DEFAULT_PROJECT)) {
+    select.value = DEFAULT_PROJECT;
   } else if (projects.length > 0) {
     select.value = projects[0].name;
   }
@@ -2042,18 +2538,87 @@ async function loadProjectFields(projectName) {
   document.getElementById('setting-photographer').value = project.photographer || '';
   document.getElementById('setting-institution').value = project.institution || '';
   document.getElementById('setting-measurements').value = project.measurements_file || '';
-  document.getElementById('setting-ruler-position').value = project.fixed_ruler_position || 'top';
+  document.getElementById('setting-output-type').value = project.output_type || 'digital';
+
+  // Resolve the project's ruler config into our selection convention.
+  // Built-in project JSONs use either:
+  //   ruler_file : "Name.svg"                        → single fixed ruler
+  //   ruler_files: { "1cm": "...", "2cm": "...", ... } → adaptive set
+  // Our UI uses `file:<path>` and `set:<groupId>` strings in the hidden
+  // input. populateRulerGrid() already matches bare filenames against the
+  // built-in absolute paths, so `file:Name.svg` works fine.
+  let rulerSelection = '';
+  if (project.ruler_set) {
+    rulerSelection = `set:${project.ruler_set}`;
+  } else if (project.ruler_files && typeof project.ruler_files === 'object') {
+    const sample = project.ruler_files['1cm'] || project.ruler_files['2cm']
+                || project.ruler_files['5cm'] || Object.values(project.ruler_files)[0] || '';
+    if (/^BM_/i.test(sample)) rulerSelection = 'set:bm_donated';
+    else if (/^Black_/i.test(sample)) rulerSelection = 'set:black_jena';
+  } else if (project.ruler_file) {
+    rulerSelection = `file:${project.ruler_file}`;
+  }
+  document.getElementById('setting-ruler-file').value = rulerSelection;
   document.getElementById('setting-credit').value = project.credit_line || '';
-  document.getElementById('setting-logo-enabled').checked = !!project.logo_enabled;
+  document.getElementById('setting-usage-terms').value = project.usage_terms || '';
   document.getElementById('setting-logo-path').value = project.logo_path || '';
 
   const bg = project.background_color || [0, 0, 0];
-  document.getElementById('setting-background').value =
-    (bg[0] > 128 && bg[1] > 128 && bg[2] > 128) ? 'white' : 'black';
+  const bgValue = (bg[0] > 128 && bg[1] > 128 && bg[2] > 128) ? 'white' : 'black';
+  document.getElementById('setting-background').value = bgValue;
+  document.querySelectorAll('.bg-swatch-setting').forEach(b =>
+    b.classList.toggle('selected', b.dataset.bg === bgValue));
+}
+
+function showNewProjectPrompt() {
+  const row = document.getElementById('setting-new-project-row');
+  const input = document.getElementById('setting-new-project-name');
+  row.classList.remove('hidden');
+  input.value = '';
+  input.focus();
+}
+
+function hideNewProjectPrompt() {
+  document.getElementById('setting-new-project-row').classList.add('hidden');
+  document.getElementById('setting-new-project-name').value = '';
+}
+
+async function createNewProject() {
+  const name = document.getElementById('setting-new-project-name').value.trim();
+  if (!name) {
+    alert('Please enter a project name.');
+    return;
+  }
+  const projects = await window.api.listProjects();
+  if (projects.some(p => p.name === name)) {
+    alert(`A project named "${name}" already exists.`);
+    return;
+  }
+  const project = await window.api.newProject(name);
+  await window.api.saveProject(project);
+  hideNewProjectPrompt();
+  await loadProjectList(name);
+  setStatus(`Created project "${name}". Configure and Save Settings.`);
+}
+
+async function deleteSelectedProject() {
+  const select = document.getElementById('setting-project-select');
+  const name = select.value;
+  if (!name) return;
+  const project = await window.api.getProject(name);
+  if (project && project.builtin) {
+    alert(`"${name}" is a built-in project and cannot be deleted.`);
+    return;
+  }
+  if (!confirm(`Delete project "${name}"?\n\nThis removes the saved configuration. Built-in defaults (if any) will reappear.`)) return;
+  await window.api.deleteProject(name);
+  await loadProjectList(null);
+  setStatus(`Deleted project "${name}".`);
 }
 
 function closeSettings() {
   document.getElementById('settings-overlay').classList.add('hidden');
+  hideNewProjectPrompt();
 }
 
 async function saveSettings() {
@@ -2072,12 +2637,22 @@ async function saveSettings() {
       photographer: document.getElementById('setting-photographer').value.trim(),
       institution: document.getElementById('setting-institution').value.trim(),
       measurements_file: document.getElementById('setting-measurements').value.trim(),
-      fixed_ruler_position: document.getElementById('setting-ruler-position').value,
+      fixed_ruler_position: 'bottom',
       ruler_position_locked: true,
+      ruler_file: (() => {
+        const v = document.getElementById('setting-ruler-file').value.trim();
+        return v.startsWith('file:') ? v.slice(5) : (v.startsWith('set:') ? '' : v);
+      })(),
+      ruler_set: (() => {
+        const v = document.getElementById('setting-ruler-file').value.trim();
+        return v.startsWith('set:') ? v.slice(4) : '';
+      })(),
+      output_type: document.getElementById('setting-output-type').value,
       credit_line: document.getElementById('setting-credit').value.trim(),
+      usage_terms: document.getElementById('setting-usage-terms').value.trim(),
       background_color: bgValue === 'white' ? [255, 255, 255] : [0, 0, 0],
-      logo_enabled: document.getElementById('setting-logo-enabled').checked,
       logo_path: document.getElementById('setting-logo-path').value.trim(),
+      logo_enabled: !!document.getElementById('setting-logo-path').value.trim(),
     };
 
     // Merge with existing project to preserve fields we don't edit here
@@ -2167,11 +2742,34 @@ async function runStitcher(tablets) {
   isStitcherRunning = true;
   document.getElementById('btn-reprocess-all').disabled = true;
 
+  // Figure out which variants this run will produce so the 'sent' badge can
+  // be scoped correctly. Falls back to 'digital' if the project/output_type
+  // can't be resolved.
+  try {
+    const config = await window.api.getStitcherConfig();
+    const project = config?.activeProject ? await window.api.getProject(config.activeProject) : null;
+    const outputType = project?.output_type || 'digital';
+    if (outputType === 'print') _currentRunVariants = ['print'];
+    else if (outputType === 'both') _currentRunVariants = ['digital', 'print'];
+    else _currentRunVariants = ['digital'];
+  } catch {
+    _currentRunVariants = ['digital'];
+  }
+
   document.querySelector('.right-tab[data-tab="results"]')?.click();
 
+  setResultView('dashboard');
   const statusEl = document.getElementById('stitcher-status');
+  const progressEl = document.getElementById('stitcher-progress');
+  const dashEmpty = document.getElementById('dashboard-empty');
+  if (dashEmpty) dashEmpty.classList.add('hidden');
   statusEl.classList.remove('hidden');
-  statusEl.textContent = 'Starting stitcher...\n';
+  statusEl.replaceChildren();
+  appendStitcherLine(statusEl, 'Starting stitcher...');
+  if (progressEl) {
+    progressEl.classList.remove('hidden');
+    progressEl.value = 0;
+  }
 
   setStatus('Stitcher running...');
 
@@ -2182,10 +2780,10 @@ async function runStitcher(tablets) {
 
   // Clean cached _object.tif and _ruler.tif files so the stitcher
   // re-extracts from the (possibly edited) source images
-  statusEl.textContent += 'Cleaning cached files...\n';
+  appendStitcherLine(statusEl, 'Cleaning cached files...');
   const cleanedCount = await window.api.cleanTabletCache(rootFolder, tablets);
   if (cleanedCount > 0) {
-    statusEl.textContent += `Removed ${cleanedCount} cached file(s).\n`;
+    appendStitcherLine(statusEl, `Removed ${cleanedCount} cached file(s).`);
   }
 
   const result = await window.api.processTablets(rootFolder, tablets);
@@ -2193,27 +2791,119 @@ async function runStitcher(tablets) {
   isStitcherRunning = false;
   document.getElementById('btn-reprocess-all').disabled = false;
 
-  // Mark all sent tablets as 'sent' (yellow) so user knows to review them
+  if (progressEl) {
+    progressEl.value = 100;
+  }
+
+  // Mark each sent tablet as 'sent' (yellow) only on the variants this run
+  // actually produced — stale opposite-variant files keep their old status.
   for (const name of sentTablets) {
-    const existing = resultsState.reviewStatus[name] || {};
-    resultsState.reviewStatus[name] = {
-      ...existing,
-      status: 'sent',
-      reviewedAt: new Date().toISOString(),
-    };
+    for (const variant of _currentRunVariants) {
+      markVariantSent(name, variant);
+    }
   }
   await window.api.saveReviewStatus(getResultsRoot(), resultsState.reviewStatus);
 
   if (result.success) {
     setStatus('Stitcher finished. Review the results.');
-    statusEl.textContent += '\n=== DONE ===\n';
+    appendStitcherLine(statusEl, '');
+    appendStitcherLine(statusEl, '=== DONE ===');
   } else {
     setStatus(`Stitcher finished with errors. Review the results.`);
-    statusEl.textContent += `\n=== FINISHED (exit code ${result.exitCode}) ===\n`;
+    appendStitcherLine(statusEl, '');
+    appendStitcherLine(statusEl, `=== FINISHED (exit code ${result.exitCode}) ===`);
   }
 
   await loadResults();
   updateTreeStatusIcons();
+}
+
+const TABLET_BANNER_RE = /^Processing Subfolder \d+\/\d+: .+$/;
+const MEASUREMENT_LINE_RE = /measurement|px\/cm|Measurements saved/i;
+const TABLET_FINISHED_RE = /^Finished processing and stitching for tablet:\s*(.+?)\s*$/;
+
+// Which variants (digital / print) the most recent stitcher run produced.
+// Populated from the active project's output_type when runStitcher starts, and
+// used to scope the yellow 'sent' badge: only variants that were actually
+// regenerated in this run get marked. Stale variants from earlier runs stay
+// untouched (no "sent" badge appears on them).
+let _currentRunVariants = ['digital'];
+
+function getEffectiveReview(review, variant = 'digital') {
+  if (!review) return {};
+  const varReview = review.variants?.[variant];
+  if (varReview?.status) {
+    return { ...review, ...varReview };
+  }
+  return review;
+}
+
+function markVariantSent(tabletName, variant) {
+  const entry = resultsState.reviewStatus[tabletName] || {};
+  // Strip any legacy top-level 'sent' so it doesn't shadow other variants —
+  // that marker predates the per-variant schema and should only apply to
+  // whatever is regenerated now. Manual statuses (updated/revision/finished)
+  // stay at top-level because those apply to the tablet as a whole.
+  const base = { ...entry };
+  if (base.status === 'sent') delete base.status;
+  const variants = { ...(base.variants || {}) };
+  variants[variant] = {
+    ...(variants[variant] || {}),
+    status: 'sent',
+    reviewedAt: new Date().toISOString(),
+  };
+  resultsState.reviewStatus[tabletName] = { ...base, variants };
+}
+
+let _incrementalResultsTimer = null;
+const _incrementalSentNames = new Set();
+
+function scheduleIncrementalResultsRefresh(tabletName) {
+  if (tabletName) _incrementalSentNames.add(tabletName);
+  // Debounce so back-to-back finishes (e.g. the tail of one tablet + the
+  // banner of the next) only trigger one rescan. 1.5s is short enough that
+  // users see new thumbnails quickly and long enough to absorb bursts.
+  if (_incrementalResultsTimer) clearTimeout(_incrementalResultsTimer);
+  _incrementalResultsTimer = setTimeout(async () => {
+    _incrementalResultsTimer = null;
+    try {
+      const names = Array.from(_incrementalSentNames);
+      _incrementalSentNames.clear();
+      // Apply 'sent' status to freshly finished tablets (per variant) before
+      // the rescan so the yellow badge appears on the new thumbnails
+      // immediately. Only variants produced by the current run are marked.
+      if (names.length > 0) {
+        for (const name of names) {
+          for (const variant of _currentRunVariants) {
+            markVariantSent(name, variant);
+          }
+        }
+        await window.api.saveReviewStatus(getResultsRoot(), resultsState.reviewStatus);
+      }
+      await loadResults();
+    } catch (err) {
+      console.error('Incremental loadResults failed:', err);
+    }
+  }, 1500);
+}
+
+function appendStitcherLine(statusEl, text) {
+  const div = document.createElement('div');
+  if (TABLET_BANNER_RE.test(text)) {
+    div.className = 'tablet-banner';
+  } else if (MEASUREMENT_LINE_RE.test(text)) {
+    div.className = 'log-line measurement-line';
+  } else {
+    div.className = 'log-line';
+  }
+  div.textContent = text;
+  statusEl.appendChild(div);
+  statusEl.scrollTop = statusEl.scrollHeight;
+
+  const finishMatch = text.match(TABLET_FINISHED_RE);
+  if (finishMatch) {
+    scheduleIncrementalResultsRefresh(finishMatch[1]);
+  }
 }
 
 function handleStitcherProgress(event) {
@@ -2222,12 +2912,12 @@ function handleStitcherProgress(event) {
 
   if (event.type === 'progress') {
     setStatus(`Stitcher: ${event.value}%`);
+    const progressEl = document.getElementById('stitcher-progress');
+    if (progressEl) progressEl.value = event.value;
   } else if (event.type === 'log' || event.type === 'stderr') {
-    statusEl.textContent += event.message + '\n';
-    statusEl.scrollTop = statusEl.scrollHeight;
+    appendStitcherLine(statusEl, event.message);
   } else if (event.type === 'error') {
-    statusEl.textContent += `ERROR: ${event.message}\n`;
-    statusEl.scrollTop = statusEl.scrollHeight;
+    appendStitcherLine(statusEl, `ERROR: ${event.message}`);
   }
 }
 
@@ -2328,6 +3018,9 @@ async function buildSelectedTree() {
 async function loadSelectedFolder(index) {
   const folder = selectedTreeFolders[index];
   if (!folder) return;
+  // Same rationale as loadCurrentSubfolder: drop the viewer when folder
+  // changes so we land on the new folder's grid, not a stale single image.
+  if (isViewerOpen()) exitViewerMode();
   selectedTreeIndex = index;
 
   // Highlight active item
@@ -2517,7 +3210,9 @@ async function onExportSelected() {
 
   if (result.success) {
     setStatus(`Exported ${result.count} image(s) to ${folderLabel}/${tabletName}/`);
-    buildSelectedTree(); // refresh the tree
+    // Rebuild according to current mode — buildSelectedTree would overwrite
+    // the picker's source tree with the renamer's "Selected" view otherwise.
+    buildTreeView();
   } else {
     setStatus(`Export failed: ${result.error}`);
   }

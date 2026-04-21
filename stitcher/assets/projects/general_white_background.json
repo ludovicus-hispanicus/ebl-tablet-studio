@@ -1,0 +1,19 @@
+{
+  "name": "General (white background)",
+  "builtin": true,
+  "background_color": [255, 255, 255],
+  "ruler_mode": "single",
+  "ruler_file": "General_External_photo_ruler.svg",
+  "ruler_size_cm": 3.248,
+  "detection_method": "general",
+  "ruler_position_locked": false,
+  "fixed_ruler_position": "bottom",
+  "institution": "",
+  "credit_line": "",
+  "usage_terms": "",
+  "logo_enabled": false,
+  "logo_path": "",
+  "measurements_file": "",
+  "output_type": "digital",
+  "ruler_set": ""
+}

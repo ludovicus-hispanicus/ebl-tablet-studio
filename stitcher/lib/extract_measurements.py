@@ -372,12 +372,17 @@ def create_measurement_record_from_excel(object_image_path: str, pixels_per_cm: 
     """
     try:
         from measurements_utils import get_tablet_width_from_measurements
-        
-        # Check if measurement record already exists to avoid duplicates
-        if measurement_record_exists(file_id, subfolder_path):
+
+        # Write records to the MAIN folder (parent of the tablet subfolder) so
+        # that finalize_measurements_with_comparison can find them. The existence
+        # check targets the same location — per-subfolder JSONs from older runs
+        # are intentionally ignored.
+        main_dir = os.path.dirname(subfolder_path)
+
+        if measurement_record_exists(file_id, main_dir):
             print(f"   Measurement record already exists for {file_id}, skipping creation")
             return True
-        
+
         # Get Excel width measurement
         tablet_width_cm = get_tablet_width_from_measurements(subfolder_path, measurements_dict)
         if tablet_width_cm is None or tablet_width_cm <= 0:
@@ -388,13 +393,12 @@ def create_measurement_record_from_excel(object_image_path: str, pixels_per_cm: 
         measurement_record = create_measurement_record_with_known_width(
             object_image_path, pixels_per_cm, file_id, tablet_width_cm, gap_pixels
         )
-        
+
         if measurement_record:
-            # Save the measurement record
-            existing_measurements = load_existing_measurements(subfolder_path)
+            existing_measurements = load_existing_measurements(main_dir)
             existing_measurements = [m for m in existing_measurements if m.get("_id") != file_id]
             existing_measurements.append(measurement_record)
-            save_measurements_to_json(existing_measurements, subfolder_path)
+            save_measurements_to_json(existing_measurements, main_dir)
             print(f"   ✓ Excel measurement record created for {file_id} using final extracted object")
             return True
         else:

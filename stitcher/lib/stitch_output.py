@@ -31,9 +31,15 @@ def save_stitched_output(
     output_dpi,
     object_width_cm=None,
     object_length_cm=None,
-    pixels_per_cm=None
+    pixels_per_cm=None,
+    output_folder_suffix=""
 ):
-    """Save stitched output in both TIFF and JPG formats with metadata."""
+    """Save stitched output in both TIFF and JPG formats with metadata.
+
+    output_folder_suffix: appended to the default `_Final_TIFF` / `_Final_JPG`
+    folder names so that print variants land alongside the digital outputs
+    without overwriting them (e.g. suffix='_Print' → `_Final_TIFF_Print/`).
+    """
     if not isinstance(final_image, np.ndarray) or final_image.size == 0:
         raise ValueError("Invalid image for saving")
 
@@ -45,9 +51,9 @@ def save_stitched_output(
     final_image = apply_professional_processing(final_image)
 
     final_tiff_output_dir = os.path.join(
-        main_input_folder_path, FINAL_TIFF_SUBFOLDER_NAME)
+        main_input_folder_path, FINAL_TIFF_SUBFOLDER_NAME + output_folder_suffix)
     final_jpg_output_dir = os.path.join(
-        main_input_folder_path, FINAL_JPG_SUBFOLDER_NAME)
+        main_input_folder_path, FINAL_JPG_SUBFOLDER_NAME + output_folder_suffix)
     os.makedirs(final_tiff_output_dir, exist_ok=True)
     os.makedirs(final_jpg_output_dir, exist_ok=True)
 

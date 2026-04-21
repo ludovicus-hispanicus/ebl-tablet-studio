@@ -231,12 +231,6 @@
         </div>
       </div>
 
-      <!-- Rotation controls -->
-      <div id="rotation-controls">
-        <button id="btn-rot-ccw" title="Rotate 90° CCW (Shift+Left)">&#x21B6; 90°</button>
-        <button id="btn-rot-180" title="Rotate 180° (Shift+Down)">&#x21BB; 180°</button>
-        <button id="btn-rot-cw" title="Rotate 90° CW (Shift+Right)">&#x21B7; 90°</button>
-      </div>
       </div><!-- end tab-structure -->
 
       <!-- Tools Tab -->
@@ -295,13 +289,30 @@
       <div id="tab-results" class="tab-content">
         <div id="results-container">
           <div id="result-header">
+            <div class="result-view-tabs">
+              <button type="button" class="result-view-tab active" data-result-view="dashboard">Dashboard</button>
+              <button type="button" class="result-view-tab" data-result-view="detail">Detail</button>
+            </div>
             <div id="result-summary"></div>
             <button id="btn-reprocess-all" class="btn-reprocess-secondary">Reprocess All</button>
           </div>
-          <div id="result-notes-container">
-            <textarea id="result-notes" placeholder="Add notes..." rows="6"></textarea>
+          <div id="result-view-dashboard" class="result-view">
+            <div id="dashboard-notes-container">
+              <label class="dashboard-notes-label" for="dashboard-notes">General notes</label>
+              <textarea id="dashboard-notes" placeholder="Notes for this batch / results folder..." rows="3"></textarea>
+            </div>
+            <progress id="stitcher-progress" class="hidden" max="100" value="0"></progress>
+            <div id="stitcher-status" class="hidden"></div>
+            <div id="dashboard-empty" class="dashboard-empty">No stitcher run yet. Process some tablets to see live progress, logs, and run summary here.</div>
           </div>
-          <div id="stitcher-status" class="hidden"></div>
+          <div id="result-view-detail" class="result-view hidden">
+            <div id="result-notes-container">
+              <label class="dashboard-notes-label" for="result-notes">Notes for selected tablet</label>
+              <textarea id="result-notes" placeholder="Select a tablet thumbnail to add notes..." rows="5" disabled></textarea>
+            </div>
+            <div id="result-metadata" class="hidden"></div>
+            <div id="detail-empty" class="detail-empty">Select a result thumbnail to see notes and metadata.</div>
+          </div>
         </div>
       </div><!-- end tab-results -->
     </section>
@@ -327,62 +338,119 @@
           <label>Active Project:</label>
           <div class="settings-input-row">
             <select id="setting-project-select"></select>
+            <button id="setting-new-project" type="button" title="Create a new project">New</button>
+            <button id="setting-delete-project" type="button" title="Delete custom project">Delete</button>
+          </div>
+        </div>
+        <div class="settings-row hidden" id="setting-new-project-row">
+          <label>New project name:</label>
+          <div class="settings-input-row">
+            <input type="text" id="setting-new-project-name" placeholder="Name" autocomplete="off" />
+            <button id="setting-new-project-confirm" type="button">Create</button>
+            <button id="setting-new-project-cancel" type="button">Cancel</button>
           </div>
         </div>
 
-        <div id="project-config-fields">
-          <div class="settings-row">
-            <label>Photographer:</label>
-            <input type="text" id="setting-photographer" placeholder="Photographer name" />
-          </div>
-          <div class="settings-row">
-            <label>Institution:</label>
-            <input type="text" id="setting-institution" placeholder="Institution name" />
-          </div>
-          <div class="settings-row">
-            <label>Measurements file:</label>
-            <div class="settings-input-row">
-              <input type="text" id="setting-measurements" placeholder="Path to .xlsx or .json" readonly />
-              <button id="setting-browse-measurements">Browse</button>
-              <button id="setting-clear-measurements" title="Clear">&times;</button>
+        <div id="settings-tabs">
+          <button type="button" class="settings-tab active" data-settings-tab="processing">Image Processing</button>
+          <button type="button" class="settings-tab" data-settings-tab="metadata">Metadata</button>
+        </div>
+
+          <div id="settings-tab-processing" class="settings-tab-panel active">
+            <div class="settings-row">
+              <label>Measurements file:</label>
+              <div class="settings-input-row">
+                <input type="text" id="setting-measurements" placeholder="Path to .xlsx or .json" readonly />
+                <button id="setting-browse-measurements">Browse</button>
+                <button id="setting-clear-measurements" title="Clear">&times;</button>
+              </div>
             </div>
-          </div>
-          <div class="settings-row">
-            <label>Ruler position:</label>
-            <select id="setting-ruler-position">
-              <option value="top">Top</option>
-              <option value="bottom">Bottom</option>
-              <option value="left">Left</option>
-              <option value="right">Right</option>
-            </select>
-          </div>
-          <div class="settings-row">
-            <label>Background:</label>
-            <div class="settings-input-row">
-              <select id="setting-background">
-                <option value="white">White</option>
-                <option value="black">Black</option>
+            <div class="settings-row">
+              <label>Output:</label>
+              <select id="setting-output-type">
+                <option value="digital">Digital &mdash; all views, with gradients</option>
+                <option value="print">Print &mdash; only _01–_06 photos, no intermediates</option>
+                <option value="both">Both</option>
               </select>
             </div>
-          </div>
-          <div class="settings-row">
-            <label>Add logo:</label>
-            <div class="settings-input-row">
-              <input type="checkbox" id="setting-logo-enabled" />
-              <input type="text" id="setting-logo-path" placeholder="Path to logo image (.png, .jpg, .svg)" readonly />
-              <button id="setting-browse-logo">Browse</button>
-              <button id="setting-clear-logo" title="Clear">&times;</button>
+            <div class="settings-row">
+              <label>Background:</label>
+              <div class="bg-swatch-row">
+                <button type="button" class="bg-swatch-setting" data-bg="white" title="White background">
+                  <span class="bg-swatch-preview bg-swatch-white"></span>
+                  <span class="bg-swatch-label">White</span>
+                </button>
+                <button type="button" class="bg-swatch-setting" data-bg="black" title="Black background">
+                  <span class="bg-swatch-preview bg-swatch-black"></span>
+                  <span class="bg-swatch-label">Black</span>
+                </button>
+                <input type="hidden" id="setting-background" value="black" />
+              </div>
+            </div>
+            <div class="settings-row">
+              <label>Add logo:</label>
+              <div class="settings-input-row">
+                <input type="text" id="setting-logo-path" placeholder="Path to logo image (.png, .jpg, .svg)" readonly />
+                <button id="setting-browse-logo">Browse</button>
+                <button id="setting-clear-logo" title="Clear">&times;</button>
+              </div>
+            </div>
+            <div class="settings-row">
+              <label>Ruler:</label>
+              <div class="settings-input-row">
+                <button id="setting-open-ruler" type="button">Ruler settings&hellip;</button>
+              </div>
             </div>
           </div>
-          <div class="settings-row">
-            <label>Credit line:</label>
-            <textarea id="setting-credit" placeholder="Credit/copyright text" rows="2"></textarea>
-          </div>
-        </div>
 
-        <div class="settings-footer">
-          <button id="settings-save" class="btn-save">Save Settings</button>
+          <div id="settings-tab-metadata" class="settings-tab-panel">
+            <div class="settings-row">
+              <label>Photographer:</label>
+              <input type="text" id="setting-photographer" placeholder="Photographer name" />
+            </div>
+            <div class="settings-row">
+              <label>Institution:</label>
+              <input type="text" id="setting-institution" placeholder="Institution name" />
+            </div>
+            <div class="settings-row">
+              <label>Credit line:</label>
+              <textarea id="setting-credit" placeholder="Credit/copyright text (Copyright, dc:rights, photoshop:Credit)" rows="4"></textarea>
+            </div>
+            <div class="settings-row">
+              <label>Usage terms:</label>
+              <textarea id="setting-usage-terms" placeholder="License / usage terms (xmpRights:UsageTerms)" rows="4"></textarea>
+            </div>
+          </div>
+      </div>
+      <div class="settings-footer">
+        <button id="settings-save" class="btn-save">Save Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Ruler Settings Overlay -->
+  <div id="ruler-overlay" class="hidden">
+    <div id="ruler-panel">
+      <div id="ruler-header">
+        <div class="ruler-header-title">
+          <h3>Ruler Settings</h3>
+          <span class="ruler-header-note">(the ruler is placed at the bottom of the final composite.)</span>
         </div>
+        <button id="ruler-close">&times;</button>
+      </div>
+      <div id="ruler-content">
+        <div class="settings-section-label">Available rulers</div>
+        <div id="ruler-grid">
+          <div class="ruler-loading">Loading\u2026</div>
+        </div>
+        <div class="settings-input-row" style="margin-top:12px;">
+          <button id="setting-browse-ruler" type="button">Upload custom ruler&hellip;</button>
+          <button id="setting-clear-ruler" type="button" title="Use default">Reset to default</button>
+        </div>
+        <input type="hidden" id="setting-ruler-file" />
+      </div>
+      <div class="settings-footer">
+        <button id="ruler-done" class="btn-save" type="button">Done</button>
       </div>
     </div>
   </div>
