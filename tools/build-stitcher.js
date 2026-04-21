@@ -52,17 +52,35 @@ if (build.status !== 0) {
 }
 
 // Locate the built artifact and copy it into resources/stitcher/.
+// Each platform has a different layout:
+//   Windows: dist/eBL Photo Stitcher.exe       (single file)
+//   Linux:   dist/eBL Photo Stitcher           (single file)
+//   macOS:   dist/eBL Photo Stitcher.app/      (directory bundle; runtime
+//            bridge expects the .app laid out intact under resources/stitcher/)
 const distDir = path.join(stitcherDir, 'dist');
-const distExe = path.join(distDir, isWin ? 'eBL Photo Stitcher.exe' : 'eBL Photo Stitcher');
-
-if (!fs.existsSync(distExe)) {
-  console.error(`\nBuild succeeded but expected output not found: ${distExe}`);
-  process.exit(1);
-}
-
 fs.mkdirSync(resourcesDir, { recursive: true });
-const target = path.join(resourcesDir, isWin ? 'eBL.Photo.Stitcher.exe' : 'eBL.Photo.Stitcher');
-fs.copyFileSync(distExe, target);
+
+let target;
+if (isMac) {
+  const distApp = path.join(distDir, 'eBL Photo Stitcher.app');
+  if (!fs.existsSync(distApp)) {
+    console.error(`\nBuild succeeded but expected .app not found: ${distApp}`);
+    process.exit(1);
+  }
+  target = path.join(resourcesDir, 'eBL Photo Stitcher.app');
+  // cpSync preserves symlinks & permissions inside the .app bundle —
+  // copyFileSync only handles regular files.
+  fs.rmSync(target, { recursive: true, force: true });
+  fs.cpSync(distApp, target, { recursive: true, dereference: false });
+} else {
+  const distExe = path.join(distDir, isWin ? 'eBL Photo Stitcher.exe' : 'eBL Photo Stitcher');
+  if (!fs.existsSync(distExe)) {
+    console.error(`\nBuild succeeded but expected output not found: ${distExe}`);
+    process.exit(1);
+  }
+  target = path.join(resourcesDir, isWin ? 'eBL.Photo.Stitcher.exe' : 'eBL.Photo.Stitcher');
+  fs.copyFileSync(distExe, target);
+}
 
 console.log(`\n✓ Wrote ${path.relative(repoRoot, target)}`);
 console.log('  Next: relaunch the app and reprocess a tablet to pick up the new binary.');
