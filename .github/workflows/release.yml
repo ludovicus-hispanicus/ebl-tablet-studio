@@ -4,89 +4,82 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build (e.g. v1.0.0-rc.1)'
+        required: true
+        type: string
 
 permissions:
   contents: write
 
-env:
-  # Pinned standalone stitcher release (bundled as resources/stitcher/ via
-  # electron-builder extraResources). Update when a newer stitcher release
-  # is ready to ship. Phase B vendors stitcher source into this repo,
-  # eliminating the cross-repo download.
-  STITCHER_VERSION: v2.0-rc.16
-  STITCHER_REPO: ludovicus-hispanicus/ebl-photo-stitcher
-
 jobs:
   build:
-    # Each OS builds with electron-builder, which (because build.publish is
-    # configured in package.json and GH_TOKEN is set) uploads artifacts AND
-    # the auto-update manifests (latest*.yml + .blockmap) directly into a
-    # single draft release on GitHub keyed by the pushed tag. All three
-    # matrix jobs land in the same draft.
+    # Each OS builds the bundled stitcher from vendored Python source via
+    # PyInstaller, then packages the Electron app via electron-builder.
+    # electron-builder is configured with publish:github in package.json, so
+    # the produced installers + auto-update manifests (latest*.yml + .blockmap)
+    # are uploaded to the release keyed by the pushed tag. On manual dispatch
+    # the workflow checks out the named tag and uploads to the existing
+    # release at that tag.
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
             script: dist
-          - os: macos-latest
-            script: dist:mac
+          - os: macos-14
+            script: 'dist:mac'
           - os: ubuntu-latest
-            script: dist:linux
+            script: 'dist:linux'
 
     runs-on: ${{ matrix.os }}
 
     steps:
+      - name: Resolve tag ref
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "ref=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.ref }}
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'npm'
 
-      - name: Install dependencies
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: stitcher/requirements.txt
+
+      - name: Install Python build deps
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r stitcher/requirements.txt pyinstaller
+
+      - name: Install Node deps
         run: npm ci
 
       - name: Install sharp cross-platform binaries (macOS)
         if: runner.os == 'macOS'
         run: |
-          npm install --force @img/sharp-darwin-x64@0.33.5 @img/sharp-libvips-darwin-x64@1.0.4
           npm install --force @img/sharp-darwin-arm64@0.33.5 @img/sharp-libvips-darwin-arm64@1.0.4
 
-      - name: Download bundled stitcher (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          mkdir -p resources/stitcher
-          gh release download "$STITCHER_VERSION" \
-            --repo "$STITCHER_REPO" \
-            --pattern "eBL*Stitcher.exe" \
-            --dir resources/stitcher
-          ls -la resources/stitcher
+      - name: Build bundled stitcher from vendored source
+        run: npm run build-stitcher
 
-      - name: Download bundled stitcher (macOS arm64)
-        if: runner.os == 'macOS'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          mkdir -p resources/stitcher /tmp/stitcher-dmg
-          gh release download "$STITCHER_VERSION" \
-            --repo "$STITCHER_REPO" \
-            --pattern "*macOS_arm64.dmg" \
-            --dir /tmp/stitcher-dmg
-          DMG=$(ls /tmp/stitcher-dmg/*.dmg | head -1)
-          hdiutil attach "$DMG" -nobrowse -readonly -mountpoint /tmp/stitcher-mount
-          cp -R "/tmp/stitcher-mount/eBL Photo Stitcher.app" resources/stitcher/
-          hdiutil detach /tmp/stitcher-mount
-          ls -la resources/stitcher
-
-      - name: Prepare empty stitcher dir (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          mkdir -p resources/stitcher
-          echo "Stitcher is not shipped on Linux (Phase A)." > resources/stitcher/README.txt
-
-      - name: Build and publish
+      - name: Build and publish app
         run: npm run ${{ matrix.script }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -115,32 +108,38 @@ jobs:
 
   publish:
     # Finalize the draft release electron-builder created during build.
-    # Uses the GitHub API directly — softprops/action-gh-release was creating
-    # a duplicate release that collided on finalize, so this job simply
-    # patches the existing draft to { draft: false, prerelease: contains(ref, '-') }.
+    # If the release already exists as non-draft (e.g. workflow triggered
+    # manually against a published RC to append Mac/Linux artifacts), this
+    # step no-ops.
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "ref=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
       - name: Finalize release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ steps.tag.outputs.ref }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
 
-          # Find the draft release electron-builder created for this tag.
           REL_ID=$(gh api "repos/$REPO/releases" \
             --jq ".[] | select(.tag_name==\"$TAG\" and .draft==true) | .id" \
             | head -1)
 
           if [ -z "$REL_ID" ]; then
-            echo "No draft release found for $TAG — assuming already published."
+            echo "No draft release found for $TAG — already published, nothing to finalize."
             gh release view "$TAG" --repo "$REPO" || true
             exit 0
           fi
 
-          # Tags containing a hyphen (v1.2.3-beta.1, v1.2.3-rc.1) = prerelease.
           if [[ "$TAG" == *-* ]]; then
             PRERELEASE=true
           else
