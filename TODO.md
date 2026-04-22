@@ -2,6 +2,69 @@
 
 Small known issues and follow-ups that aren't urgent.
 
+## Auto-classify loose photos into tablet subfolders
+
+When the user opens a folder in the Picker that contains photos at the root
+(e.g. `Si.32_01.jpg`, `Si.32_02.jpg`, `Si.33_01.jpg`, ...) **without** per-tablet
+subfolders, the app currently shows an empty tree — the user sees a "circulo
+vacío" state instead of the photos they just opened. The old
+`tablet-image-renamer` auto-grouped those files into `<TabletID>/` subfolders
+using the filename pattern.
+
+The stitcher side already has this logic at
+[`stitcher/lib/put_images_in_subfolders.py`](stitcher/lib/put_images_in_subfolders.py)
+— it groups files matching `<id>_<view>.<ext>` (e.g. `Si.32_01.jpg`,
+`Si.32_ob.jpg`) into a `Si.32/` folder. It just isn't reachable from the
+Electron UI.
+
+### Desired behavior
+
+Two acceptable flavors:
+
+- **Auto-detect + confirm (preferred)**: on folder open in Picker, if the
+  scan finds loose photos but zero subfolders, show a one-time prompt:
+  *"This folder contains N photos not grouped into tablet subfolders.
+  Organize them automatically? (groups by filename stem — `Si.32_01.jpg`
+  → `Si.32/`)"*. Yes runs the grouper; No leaves the folder as-is.
+- **Manual action button**: a toolbar button in the Picker labeled
+  "Organize loose photos" that's enabled whenever the scan detects files
+  at root that match the pattern. No auto-prompt.
+
+Start with the auto-detect+confirm flow; it's the pattern the old renamer
+used and matches "I just dumped my photos here, do something with them."
+
+### Implementation sketch
+
+1. **Scan side** — extend [`src/main/file-ops.js`](src/main/file-ops.js)'s
+   `scanFolder` (or add a companion IPC) to also return loose image files at
+   the root, not just subfolders. Today it ignores root-level files.
+2. **Grouper IPC** — new `organize-loose-photos` handler in
+   [`src/main/main.js`](src/main/main.js). Port the regex + move logic from
+   `put_images_in_subfolders.py` into Node (or shell out to it — simpler but
+   a heavier hop). Node port is ~30 lines and avoids a Python round-trip for a
+   pure filesystem operation.
+3. **Renderer** — in [`src/renderer/js/app.js`](src/renderer/js/app.js) after
+   `scanFolder`, if result has loose photos AND zero subfolders, show the
+   confirm dialog and call the new IPC. After it returns, rescan + rebuild
+   the tree.
+4. **Regex** — match the stitcher's pattern so the two paths behave
+   identically:
+   ```
+   (.+)_(\d+|ob|ol|or|rl|rr|rt|rb|ot|ob2|...)\.(jpg|jpeg|tif|tiff|png|cr2|cr3|nef|arw)
+   ```
+   (see `generate_subfoldering_pattern()` in `put_images_in_subfolders.py`).
+5. **Edge cases** — files that don't match the pattern stay at root (and are
+   reported count-only in the confirm dialog). Collisions (existing subfolder
+   same name) merge; don't overwrite existing files on name conflict.
+
+### Why move to JS (not call Python)
+
+A Python round-trip for a pure file-rename operation means users need the
+stitcher binary present even just to open an unorganized folder. Keeping the
+organizer in Node means the Picker can auto-organize before the stitcher
+binary is ever invoked. Around 30 lines of Node maps cleanly onto the Python
+original.
+
 ## Ruler output placement
 
 The UI Ruler-position field currently says "Ruler is placed at the bottom" because
@@ -24,130 +87,20 @@ not where the digital ruler is rendered in the composite.
 
 Pick this up only if a user requests non-bottom placement.
 
-## Two output types: Print vs Digital
+## Dublin-Core description polish
 
-The Image Processing tab now exposes an "Output type" select that saves to
-`project.output_type` (`"digital"` / `"print"` / `"both"`), default `digital`.
-It is **not yet wired to the stitcher** — the selection is stored but all
-runs still produce the current (digital-style) composite.
+`dc.description` and EXIF `ImageDescription` both currently carry the tablet ID
+(same value as `dc.title`). By Dublin Core they should hold a longer account
+(e.g. `"Cuneiform tablet Si.22 — stitched composite, six views."`). Decide on
+a template and swap in — minor metadata-cleanliness item, not user-visible.
 
-**Intended semantics:**
-- **Digital** — current behavior. All available photos (including
-  intermediate views `_ob`, `_ol`, `_or`, `_rl`, `_rr`, `_ot2`, etc.) with
-  gradient blending at the overlaps. Rich, web-friendly composite.
-- **Print** — only the six primary views `_01`–`_06` (obverse, reverse, top,
-  bottom, left, right). No intermediates, no gradient blends. Clean, minimal
-  plate for book/catalogue reproduction.
-- **Both** — produce both variants side by side in separate subfolders.
+---
 
-**Output folder layout (option B — chosen):**
+## Already done (kept here briefly for the changelog trail)
 
-Separate subfolders per variant, so single-output projects stay byte-identical
-to today and the print set can be published as a whole without filtering.
-
-```
-<root>/
-  _Final_JPG/            ← digital (unchanged when output_type=digital)
-    Si.32.jpg
-  _Final_JPG_Print/      ← print variant, only appears when print is produced
-    Si.32.jpg
-  _Final_TIFF/
-    Si.32.tif
-  _Final_TIFF_Print/
-    Si.32.tif
-```
-
-- `output_type = "digital"` → only `_Final_JPG/` and `_Final_TIFF/` are written.
-- `output_type = "print"` → only `_Final_JPG_Print/` and `_Final_TIFF_Print/`
-  are written (digital folders untouched / not produced).
-- `output_type = "both"` → both pairs written. Stitcher runs the canvas twice
-  with different view sets (full vs `_01`–`_06` only) and different final
-  target folders; most of the pre-processing (object extraction, ruler
-  generation, measurements) is shared.
-
-**To implement:**
-- Forward `project.output_type` via a new `--output-type` CLI flag in
-  [src/main/main.js](src/main/main.js) + [src/main/stitcher-bridge.js](src/main/stitcher-bridge.js).
-- Add the flag to argparse in
-  [stitcher/process_tablets.py](stitcher/process_tablets.py).
-- In [stitch_images.py](stitcher/lib/stitch_images.py) / the view-gathering
-  step, filter intermediates out for the print pass. For `"both"`, run the
-  stitch twice with different view sets.
-- Update [stitcher/lib/stitch_output.py](stitcher/lib/stitch_output.py) to
-  choose the output folder (`_Final_JPG` vs `_Final_JPG_Print`, same for
-  TIFF) based on which pass is running.
-- Update [src/main/results-ops.js](src/main/results-ops.js) `scanResults` to
-  also scan `_Final_JPG_Print/` and tag those results with a `variant: "print"`
-  badge so the Results panel distinguishes them.
-- Update the Results-tab renderer ([src/renderer/js/app.js](src/renderer/js/app.js))
-  to show a small "Print" badge on print-variant cards and group the digital
-  + print pair for the same tablet visually.
-
-## Built-in project renames (requires rebuild)
-
-Two stitcher projects were renamed/retired:
-
-- **`Non-eBL Ruler (VAM)` → `General (white background)`**
-  — Same ruler (`General_External_photo_ruler.svg`, single-mode, 3.248 cm).
-  Institution field cleared (was VAM-specific).
-- **`Black background (Jena)` → `General (black background)`**
-  — Same adaptive-set scale bars (`Black_*_scale.tif`).
-
-Files affected:
-- [stitcher/assets/projects/general_white_background.json](stitcher/assets/projects/general_white_background.json) (new)
-- [stitcher/assets/projects/general_black_background.json](stitcher/assets/projects/general_black_background.json) (new)
-- [stitcher/process_tablets.py](stitcher/process_tablets.py) — default `--museum` updated; calls `project_manager.set_active_project()` after loading so `_select_ruler_from_project` is used for all new projects (no hardcoded name branches needed).
-- [stitcher/lib/stitch_config.py](stitcher/lib/stitch_config.py) — keys renamed in the museum settings map.
-- [stitcher/lib/remove_background.py](stitcher/lib/remove_background.py),
-  [stitcher/lib/resize_ruler.py](stitcher/lib/resize_ruler.py),
-  [stitcher/lib/workflow_ruler_generation.py](stitcher/lib/workflow_ruler_generation.py)
-  — legacy hardcoded name strings updated to the new names (used only as fallback when `set_active_project` is not called).
-
-Old bundled `.exe` will refuse the new project names. Rebuild required before next release.
-
-## Stitcher metadata (requires rebuild of `resources/stitcher/eBL.Photo.Stitcher.exe`)
-
-- Per-project metadata overrides now flow end-to-end:
-  - UI fields: `photographer`, `institution`, `credit_line`, `usage_terms`.
-  - Electron packs them into `extraArgs` ([src/main/main.js](src/main/main.js)).
-  - Forwarded as `--institution`, `--credit-line`, `--usage-terms` by
-    [src/main/stitcher-bridge.js](src/main/stitcher-bridge.js).
-  - [stitcher/process_tablets.py](stitcher/process_tablets.py) overrides the
-    corresponding `stitch_config` module constants before any downstream
-    code reads them, so `stitch_output.py` / `pure_metadata.py` don't need
-    per-call changes.
-- Python fixes / additions already applied in
-  [stitcher/lib/pure_metadata.py](stitcher/lib/pure_metadata.py):
-  - **Fix:** `Xmp.dc.subject` now carries the tablet ID as a keyword
-    instead of the copyright text.
-  - **Metric:** `XResolution` / `YResolution` are written in px/cm with
-    `ResolutionUnit=3` when `pixels_per_cm` is known; falls back to DPI
-    otherwise.
-  - **EXIF additions:** `DateTime`, `Photo.DateTimeOriginal`,
-    `Photo.DateTimeDigitized`.
-  - **XMP additions (dc):** `identifier`, `publisher`, `date`, `type`.
-  - **XMP additions (xmp core):** `CreatorTool`, `CreateDate`, `ModifyDate`.
-  - **XMP additions (photoshop):** `Headline`.
-  - **IPTC-IIM block:** full legacy-reader block — `ObjectName`, `Headline`,
-    `Caption`, `Byline`, `Credit`, `Source`, `Copyright`, `Keywords`,
-    `DateCreated`, `TimeCreated`. Wrapped in try/except because pyexiv2's
-    IPTC support varies by version; EXIF+XMP is still written if IPTC-IIM
-    fails.
-- Build setup ready:
-  - Both `.spec` files point at the vendored `process_tablets.py` entry.
-  - `npm run build-stitcher` rebuilds + copies the binary into
-    `resources/stitcher/` (requires Python + `pyinstaller` +
-    `stitcher/requirements.txt` installed).
-- **Not yet run** — bundle more pending changes first, then rebuild +
-  release in one pass. Existing `_Final_JPG/` outputs keep their old
-  metadata until the tablet is reprocessed with the new binary.
-- **Data-cleanup candidate:** `dc.description` and `ImageDescription` both
-  currently carry the tablet ID (same as `dc.title`). By Dublin Core they
-  should hold a longer account (e.g. `"Cuneiform tablet Si.22 — stitched
-  composite, six views."`). Decide on a template and swap in.
-
-## CI
-
-- Future: add a GitHub Action that runs `npm run build-stitcher` on push to
-  `main` so the bundled `.exe` is always in sync with `stitcher/lib/`.
-  Skipped for now — not releasing yet.
+- ✅ Two output types (Digital / Print / Both) — wired end-to-end in v1.0.0-rc.1.
+- ✅ Built-in project renames (`General (white/black background)`) — shipped.
+- ✅ Stitcher metadata (EXIF/XMP/IPTC) — shipped with the rebuilt binary.
+- ✅ CI build for `npm run build-stitcher` across Windows / macOS / Linux —
+  [`.github/workflows/release.yml`](.github/workflows/release.yml) builds
+  all three platforms on every tag push.
