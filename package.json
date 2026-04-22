@@ -1,6 +1,6 @@
 {
   "name": "ebl-tablet-studio",
-  "version": "1.0.0-rc.1",
+  "version": "1.0.0-rc.2",
   "description": "Unified desktop app for cuneiform tablet image renaming, segmentation, and stitching. Successor to tablet-image-renamer and ebl-photo-stitcher.",
   "main": "src/main/main.js",
   "scripts": {

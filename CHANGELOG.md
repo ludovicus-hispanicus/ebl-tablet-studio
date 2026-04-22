@@ -4,6 +4,95 @@ All notable changes to eBL Tablet Studio are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc.2] — 2026-04-22
+
+Feature + polish pass on top of rc.1. All behaviors from rc.1 remain; this
+release layers on a RAW-to-TIFF converter, loose-photo handling in the
+Picker, and a live Results dashboard refresh during batch runs.
+
+### Added
+
+- **RAW → TIFF converter** in the Picker's new **Conversion** tab. Three
+  scopes: *Convert selected (N)*, *Convert all in folder (M)*, *Convert entire
+  project (X)*. Outputs land next to each source file as 16-bit TIFF
+  (originals kept, existing same-name TIFFs skipped). Progress streams in a
+  per-folder bar plus the Dashboard log.
+- **Picker tabs** — the picker panel now splits into *Selected* / *Conversion*
+  / *Settings* so actions are grouped by concern. Export target moved into
+  Settings next to per-folder stats.
+- **Loose-file support** — the Picker (and the Renamer's Selected tree) now
+  show a `(Loose files)` pseudo-entry at the top when root-level images
+  aren't in per-tablet subfolders. Click it to browse + select them.
+- **Organize by filename (auto)** — regex-based grouping of loose photos by
+  `<TabletID>_<view>.<ext>` naming pattern (mirrors the stitcher's
+  `put_images_in_subfolders.py`). Camera-default stems (`IMG`, `DSC`, `DSCN`,
+  `GOPR`, etc.) are skipped so they don't end up in a literal `IMG/` folder.
+- **Group selected into folder…** — manual grouping for files whose names
+  don't encode a tablet ID: select thumbnails → type a folder name → files
+  move into `<root>/<name>/`.
+- **Tablet-name prompt on loose export** — `Export Selected` from the
+  `(Loose files)` view now asks for the destination tablet name before
+  writing.
+- **Tree refresh button** (`↻`) next to the tree header. Rescans the root
+  from disk — picks up new files (e.g. from RAW conversion) and drops files
+  deleted externally.
+- **Live Results refresh during batch stitching** — each tablet's thumbnail
+  pops into the Results grid within a couple of seconds of its TIFF being
+  written, rather than everything appearing at once at the end of the run.
+  Yellow "sent" badge also lands per tablet as each finishes.
+- **Live Conversion refresh** — same debounced rescan during RAW → TIFF
+  runs, so new TIFFs show up in the Picker grid as they're produced.
+- **Tree status placeholder** — every tree row in the Renamer now shows a
+  faint empty circle (`○`), brightening on hover, to signal "click to set a
+  status" even before any status has been assigned.
+- **Reusable modal text prompt** — generic `promptForText()` helper
+  (tablet name dialog, etc.) replacing `window.prompt()` which Electron
+  disables by default.
+- **RAW thumbnail support** — `.cr2`, `.nef`, `.arw`, `.raf`, `.rw2` join
+  `.cr3` in the picker's scanner. Thumbnails render from the embedded JPEG
+  preview via `exifr`, so previews are fast even for large RAWs.
+
+### Changed
+
+- RAW → TIFF outputs now land **beside the source file** (e.g.
+  `Si.32_01.cr2` → `Si.32_01.tif` in the same folder), not in a
+  `_converted/` subfolder. Simpler mental model and plays nicer with the
+  Renamer, which already accepts TIFFs end-to-end.
+- Export target + per-folder Settings moved out of the main picker panel
+  and into the new **Settings** tab.
+- `scanSelectedFolder` IPC now returns `{ subfolders, looseImages }`
+  (formerly a bare `subfolders` array). Renderer normalizes both shapes.
+
+### Fixed
+
+- Results grid no longer shows stale review statuses across renamer-mode
+  sessions — the per-variant review mapping clears properly on scan.
+- Electron-builder couldn't publish to a non-draft release, which left rc.1
+  with only Windows artifacts. CI workflow now fetches artifacts via
+  `upload-artifact` and the `gh release upload` fallback is documented in
+  [`docs/build-macos.md`](docs/build-macos.md).
+- macOS `.dmg` build: `eBL_Photo_Stitcher_MacOS.spec` referenced a missing
+  `eBL_Logo.icns`; now uses the shared `assets/icons/icon.icns` like the
+  Windows spec.
+- macOS build script: copies the full `.app` bundle via `cpSync` instead of
+  `copyFileSync` (which refused the directory).
+- `(Loose files)` → `Export Selected` no longer crashes on the missing
+  subfolder — asks for a tablet name instead.
+- Text-prompt modal: keyboard now goes to the input (capture-phase event
+  trap stops global `Ctrl+S` / `Ctrl+E` shortcuts from firing mid-type);
+  OK/Cancel buttons styled properly.
+
+### CI
+
+- `.github/workflows/release.yml` rewritten to build the vendored stitcher
+  from source on each matrix runner (Windows / macOS-14 / Ubuntu) and
+  upload Electron installers directly to the GitHub release keyed by tag.
+  Replaces the previous cross-repo binary-download step.
+- Added `workflow_dispatch` with a `tag` input so the build can be
+  re-triggered against an existing tag without re-tagging.
+
+---
+
 ## [1.0.0-rc.1] — 2026-04-21
 
 First release candidate — the merge of

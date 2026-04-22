@@ -37,11 +37,131 @@ if lib_directory not in sys.path:
     sys.path.insert(0, lib_directory)
 
 
+RAW_EXTENSIONS = ('.cr2', '.cr3', '.nef', '.arw', '.raf', '.rw2')
+
+
+def run_convert_raw_mode(args):
+    """
+    Standalone RAW → TIFF batch converter.
+
+    File selection:
+      - if args.files is given, convert exactly those paths.
+      - otherwise, walk args.root recursively and convert every RAW file found.
+
+    Output layout: TIFFs land next to the source file — `<dir>/<name>.cr2`
+    produces `<dir>/<name>.tif` in the same folder. Existing TIFFs of the
+    same name are skipped (idempotent reruns).
+
+    Progress is streamed via --json-progress when set. Exit codes:
+      0 — at least one file converted, no fatal errors
+      1 — fatal error (all conversions failed, or pre-flight issue)
+    """
+    sys.path.insert(0, lib_directory)
+    try:
+        from raw_processor import convert_raw_image_to_tiff
+    except ImportError as e:
+        print(f"ERROR: Could not import raw_processor: {e}", file=sys.stderr)
+        return 1
+
+    if args.files:
+        candidates = [os.path.abspath(p) for p in args.files
+                      if p.lower().endswith(RAW_EXTENSIONS)]
+        ignored = len(args.files) - len(candidates)
+        if ignored > 0:
+            print(f"  Ignoring {ignored} non-RAW file(s) in --files.")
+    else:
+        candidates = []
+        for dirpath, _, filenames in os.walk(args.root):
+            for name in filenames:
+                if name.lower().endswith(RAW_EXTENSIONS):
+                    candidates.append(os.path.join(dirpath, name))
+        candidates.sort()
+
+    total = len(candidates)
+    if total == 0:
+        print("No RAW files found to convert.")
+        if args.json_progress:
+            print(json.dumps({'type': 'finished'}), flush=True)
+        return 0
+
+    print(f"=== RAW → TIFF conversion ===")
+    print(f"  Files to convert: {total}")
+    print(f"  Output layout:    TIFF written next to each source file")
+    print()
+
+    if args.json_progress:
+        print(json.dumps({'type': 'start', 'total': total, 'mode': 'convert-raw'}), flush=True)
+
+    ok = 0
+    failed = []
+    skipped = 0
+    start_time = __import__('time').time()
+
+    for idx, src in enumerate(candidates, start=1):
+        src_dir = os.path.dirname(src)
+        stem = os.path.splitext(os.path.basename(src))[0]
+        dst = os.path.join(src_dir, stem + '.tif')
+
+        label = os.path.basename(src)
+
+        if os.path.exists(dst):
+            print(f"[{idx}/{total}] Skipping {label} — {stem}.tif already exists in the same folder")
+            skipped += 1
+            if args.json_progress:
+                print(json.dumps({'type': 'progress', 'value': int(idx / total * 100)}), flush=True)
+            continue
+
+        try:
+            print(f"[{idx}/{total}] Converting {label} → {stem}.tif")
+            convert_raw_image_to_tiff(src, dst)
+            ok += 1
+        except Exception as e:
+            print(f"  ERROR converting {label}: {e}", file=sys.stderr)
+            failed.append((label, str(e)))
+
+        if args.json_progress:
+            print(json.dumps({'type': 'progress', 'value': int(idx / total * 100)}), flush=True)
+
+    elapsed = __import__('time').time() - start_time
+    mins = int(elapsed // 60)
+    secs = int(elapsed % 60)
+
+    print()
+    print(f"{'=' * 60}")
+    print(f"CONVERSION SUMMARY")
+    print(f"{'=' * 60}")
+    print(f"Time elapsed: {mins:02d}m {secs:02d}s")
+    print(f"Converted:    {ok}")
+    print(f"Skipped:      {skipped}  (TIFF of same name already exists in folder)")
+    print(f"Failed:       {len(failed)}")
+    if failed:
+        print(f"\n--- FAILED FILES ---")
+        for name, reason in failed:
+            print(f"  {name}: {reason}")
+    print(f"{'=' * 60}")
+
+    if args.json_progress:
+        print(json.dumps({'type': 'finished', 'ok': ok, 'skipped': skipped,
+                          'failed': len(failed)}), flush=True)
+
+    # Nonzero only if literally every file failed.
+    return 0 if ok > 0 or total == skipped else 1
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Process cuneiform tablet images (headless).",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
+    parser.add_argument('--mode', default='stitch',
+                        choices=['stitch', 'convert-raw'],
+                        help='"stitch" (default) runs the full object-extract + stitch pipeline. '
+                             '"convert-raw" only converts RAW (.cr2) files to TIFF, no stitching. '
+                             'convert-raw honors --files (list of specific CR2 paths) or, when '
+                             'absent, converts every *.cr2 found under --root (recursive). '
+                             'Outputs land next to each source file in the same folder.')
+    parser.add_argument('--files', nargs='*', default=None,
+                        help='Specific file paths to operate on. Used by --mode convert-raw.')
     parser.add_argument('--root', required=True,
                         help='Root folder containing tablet subfolders')
     parser.add_argument('--tablets', nargs='*', default=None,
@@ -81,6 +201,11 @@ def main():
     if not os.path.isdir(args.root):
         print(f"ERROR: Root folder does not exist: {args.root}", file=sys.stderr)
         return 2
+
+    # Fast-path: RAW → TIFF conversion only. Bypasses the entire stitch
+    # pipeline (no rembg, no ruler detection, no metadata, no measurements).
+    if args.mode == 'convert-raw':
+        return run_convert_raw_mode(args)
 
     # Apply per-run metadata overrides BEFORE any downstream module reads from
     # stitch_config. stitch_output.py and pure_metadata.py consume these values

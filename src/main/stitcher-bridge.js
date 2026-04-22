@@ -202,10 +202,78 @@ function runStitcherHeadless(exePath, rootFolder, tablets, onProgress, extraArgs
   });
 }
 
+/**
+ * Invoke the stitcher in convert-raw mode.
+ *
+ * rootFolder is required (the stitcher always wants --root). If `files` is
+ * provided, only those paths are converted; otherwise every RAW file under
+ * rootFolder is converted. Output lands in a `_converted/` subfolder next
+ * to each source file.
+ *
+ * Same progress stream + return shape as runStitcherHeadless.
+ */
+function runStitcherConvertRaw(rootFolder, files, onProgress) {
+  return new Promise((resolve) => {
+    const resolved = resolveStitcherPath();
+    const verification = verifyStitcherExe(resolved);
+    if (!verification.valid) {
+      resolve({ success: false, error: verification.reason });
+      return;
+    }
+
+    const args = ['--mode', 'convert-raw', '--root', rootFolder, '--json-progress'];
+    if (files && files.length > 0) {
+      args.push('--files', ...files);
+    }
+
+    console.log(`Running stitcher (convert-raw): "${resolved}" ${args.slice(0, 6).join(' ')} [+${(files || []).length} files]`);
+
+    const proc = spawn(resolved, args, {
+      cwd: path.dirname(resolved),
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
+    });
+
+    let stdoutBuffer = '';
+    proc.stdout.on('data', (data) => {
+      stdoutBuffer += data.toString();
+      const lines = stdoutBuffer.split('\n');
+      stdoutBuffer = lines.pop();
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        if (trimmed.startsWith('{')) {
+          try {
+            const event = JSON.parse(trimmed);
+            if (onProgress) onProgress(event);
+            continue;
+          } catch (e) { /* not JSON */ }
+        }
+        if (onProgress) onProgress({ type: 'log', message: trimmed });
+      }
+    });
+
+    proc.stderr.on('data', (data) => {
+      if (onProgress) onProgress({ type: 'stderr', message: data.toString() });
+    });
+
+    proc.on('error', (err) => {
+      console.error('Convert-raw process error:', err.message);
+      resolve({ success: false, error: err.message });
+    });
+
+    proc.on('exit', (code) => {
+      console.log(`Convert-raw exited with code ${code}`);
+      if (onProgress) onProgress({ type: 'exit', code });
+      resolve({ success: code === 0, exitCode: code });
+    });
+  });
+}
+
 module.exports = {
   resolveStitcherPath,
   loadStitcherConfig,
   saveStitcherConfig,
   verifyStitcherExe,
   runStitcherHeadless,
+  runStitcherConvertRaw,
 };

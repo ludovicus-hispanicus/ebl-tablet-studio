@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('api', {
   scanSelectedFolder: (path) => ipcRenderer.invoke('scan-selected-folder', path),
   cleanTabletCache: (rootFolder, tablets) => ipcRenderer.invoke('clean-tablet-cache', rootFolder, tablets),
   processTablets: (rootFolder, tablets) => ipcRenderer.invoke('process-tablets', rootFolder, tablets),
+  convertRawFiles: (rootFolder, files) => ipcRenderer.invoke('convert-raw-files', rootFolder, files),
 
   // Project management
   listProjects: () => ipcRenderer.invoke('list-projects'),
@@ -33,6 +34,8 @@ contextBridge.exposeInMainWorld('api', {
 
   selectFolder: () => ipcRenderer.invoke('select-folder'),
   scanFolder: (path) => ipcRenderer.invoke('scan-folder', path),
+  organizeLoosePhotos: (path) => ipcRenderer.invoke('organize-loose-photos', path),
+  moveFilesToFolder: (paths, folderName) => ipcRenderer.invoke('move-files-to-folder', paths, folderName),
   getThumbnail: (path) => ipcRenderer.invoke('get-thumbnail', path),
   getFullImage: (path) => ipcRenderer.invoke('get-full-image', path),
   getImageInfo: (path) => ipcRenderer.invoke('get-image-info', path),

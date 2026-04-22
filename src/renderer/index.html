@@ -34,7 +34,10 @@
   <main>
     <!-- Tree View: Subfolder Navigation -->
     <aside id="panel-tree">
-      <div id="tree-header">Folders</div>
+      <div id="tree-header-row">
+        <span id="tree-header">Folders</span>
+        <button id="btn-tree-refresh" type="button" title="Rescan folder from disk">&#x21BB;</button>
+      </div>
       <input type="text" id="tree-search" placeholder="Search folders..." autocomplete="off" />
       <div id="tree-list"></div>
     </aside>
@@ -89,20 +92,78 @@
 
       <!-- Picker mode panel (replaces tabs in picker mode) -->
       <div id="picker-panel" class="hidden">
-        <div id="picker-header">
-          <span id="picker-title">Picks</span>
-          <span id="picker-count">0 picked</span>
+        <div id="picker-tabs">
+          <button class="picker-tab active" type="button" data-picker-tab="selected">Selected</button>
+          <button class="picker-tab" type="button" data-picker-tab="conversion">Conversion</button>
+          <button class="picker-tab" type="button" data-picker-tab="settings">Settings</button>
         </div>
-        <div id="picker-list"></div>
-        <div id="picker-export-folder">
-          <label>Export to:</label>
-          <div id="picker-folder-row">
-            <span id="picker-folder-path" title="Click to change">_Selected</span>
-            <button id="btn-browse-export" title="Browse for export folder">...</button>
+
+        <div class="picker-tab-panel active" data-picker-panel="selected">
+          <div id="picker-header">
+            <span id="picker-title">Picks</span>
+            <span id="picker-count">0 picked</span>
+          </div>
+          <div id="picker-list"></div>
+          <div id="picker-actions">
+            <button id="btn-export-selected" class="btn-save" disabled>Export Selected</button>
           </div>
         </div>
-        <div id="picker-actions">
-          <button id="btn-export-selected" class="btn-save" disabled>Export Selected</button>
+
+        <div class="picker-tab-panel" data-picker-panel="conversion">
+          <div id="picker-raw-section">
+            <div class="picker-section-label">RAW → TIFF</div>
+            <div class="picker-raw-actions">
+              <button id="btn-convert-raw-selected" type="button" disabled>Convert selected (0)</button>
+              <button id="btn-convert-raw-all" type="button" disabled>Convert all in folder (0)</button>
+              <button id="btn-convert-raw-project" type="button" disabled>Convert entire project (0)</button>
+            </div>
+
+            <div id="picker-convert-status" class="hidden">
+              <div class="picker-section-label" style="margin-top: 12px;">Progress</div>
+              <progress id="picker-convert-progress" max="100" value="0"></progress>
+              <div id="picker-convert-label" class="picker-section-hint">Idle</div>
+            </div>
+
+            <div class="picker-section-hint" style="margin-top: 12px;">
+              Produces 16-bit TIFFs in the same folder as the source RAW files. Originals are kept; existing TIFFs of the same name are skipped. Detailed logs stream in the Results tab's Dashboard.
+            </div>
+          </div>
+        </div>
+
+        <div class="picker-tab-panel" data-picker-panel="settings">
+          <div id="picker-folder-info">
+            <div class="picker-section-label">Current folder</div>
+            <div id="picker-folder-stats">
+              <div class="stat-row"><span class="stat-label">Folder:</span> <span id="picker-stat-name">—</span></div>
+              <div class="stat-row"><span class="stat-label">Total images:</span> <span id="picker-stat-total">0</span></div>
+              <div class="stat-row"><span class="stat-label">RAW files:</span> <span id="picker-stat-raw">0</span></div>
+              <div class="stat-row"><span class="stat-label">Picked:</span> <span id="picker-stat-picked">0</span></div>
+            </div>
+
+            <div class="picker-section-label" style="margin-top: 14px;">Export target</div>
+            <div id="picker-export-folder">
+              <div id="picker-folder-row">
+                <span id="picker-folder-path" title="Click Browse to change">_Selected</span>
+                <button id="btn-browse-export" title="Browse for export folder">Browse...</button>
+              </div>
+            </div>
+
+            <div class="picker-section-label" style="margin-top: 14px;">Actions</div>
+            <div class="picker-settings-actions">
+              <button id="btn-picker-organize" type="button" disabled>Organize by filename (auto) — 0 loose</button>
+              <button id="btn-picker-group-selected" type="button" disabled>Group selected into folder… (0)</button>
+              <button id="btn-picker-clear-picks" type="button" disabled>Clear picks in this folder</button>
+              <button id="btn-picker-reveal" type="button" disabled>Reveal folder in Explorer</button>
+            </div>
+            <div id="picker-group-name-row" class="hidden">
+              <label class="picker-section-label" style="margin-top: 10px;">Folder name for selected files</label>
+              <div class="settings-input-row">
+                <input type="text" id="picker-group-name-input" placeholder="e.g. Si.32" autocomplete="off" />
+                <button id="btn-picker-group-confirm" type="button">Create</button>
+                <button id="btn-picker-group-cancel" type="button">Cancel</button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -521,6 +582,19 @@
       </p>
       <input type="text" id="user-name-input" placeholder="Your name" autocomplete="off" />
       <button id="user-name-ok" class="btn-save">OK</button>
+    </div>
+  </div>
+
+  <!-- Generic text-input modal (reused for tablet name on loose export etc.) -->
+  <div id="text-prompt-overlay" class="hidden">
+    <div id="text-prompt-panel">
+      <h3 id="text-prompt-title">Enter a value</h3>
+      <p id="text-prompt-message" style="color: var(--text-dim); font-size: 12px; margin-bottom: 12px;"></p>
+      <input type="text" id="text-prompt-input" placeholder="" autocomplete="off" />
+      <div style="display: flex; gap: 6px; justify-content: flex-end; margin-top: 10px;">
+        <button id="text-prompt-cancel">Cancel</button>
+        <button id="text-prompt-ok" class="btn-save">OK</button>
+      </div>
     </div>
   </div>
 

@@ -68,6 +68,27 @@ dom.btnReset.addEventListener('click', onReset);
 document.getElementById('btn-mode-renamer').addEventListener('click', () => switchMode('renamer'));
 document.getElementById('btn-mode-picker').addEventListener('click', () => switchMode('picker'));
 document.getElementById('btn-export-selected').addEventListener('click', onExportSelected);
+document.getElementById('btn-convert-raw-selected').addEventListener('click', () => onConvertRawClick('selected'));
+document.getElementById('btn-convert-raw-all').addEventListener('click', () => onConvertRawClick('all'));
+document.getElementById('btn-convert-raw-project').addEventListener('click', () => onConvertRawClick('project'));
+
+// Picker sub-tabs: Selected / Conversion / Settings
+document.querySelectorAll('.picker-tab').forEach(btn => {
+  btn.addEventListener('click', () => setPickerTab(btn.dataset.pickerTab));
+});
+
+document.getElementById('btn-picker-organize').addEventListener('click', onPickerOrganizeClick);
+document.getElementById('btn-picker-group-selected').addEventListener('click', showGroupSelectedPrompt);
+document.getElementById('btn-picker-group-confirm').addEventListener('click', confirmGroupSelected);
+document.getElementById('btn-picker-group-cancel').addEventListener('click', hideGroupSelectedPrompt);
+document.getElementById('picker-group-name-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); confirmGroupSelected(); }
+  else if (e.key === 'Escape') { e.preventDefault(); hideGroupSelectedPrompt(); }
+});
+document.getElementById('btn-picker-clear-picks').addEventListener('click', onPickerClearPicks);
+document.getElementById('btn-picker-reveal').addEventListener('click', onPickerRevealFolder);
+
+document.getElementById('btn-tree-refresh').addEventListener('click', refreshFromDisk);
 document.getElementById('btn-browse-export').addEventListener('click', async () => {
   const folder = await window.api.selectExportFolder();
   if (folder) {
@@ -583,10 +604,14 @@ async function openFolder(folder) {
 
   const result = await window.api.scanFolder(folder);
   state.subfolders = result.subfolders;
+  state.looseImages = result.looseImages || [];
 
-  if (state.subfolders.length === 0) {
-    setStatus('No subfolders with images found.');
+  if (state.subfolders.length === 0 && state.looseImages.length === 0) {
+    setStatus('No images found in this folder.');
     return;
+  }
+  if (state.subfolders.length === 0 && state.looseImages.length > 0) {
+    setStatus(`This folder has ${state.looseImages.length} image(s) not grouped into subfolders — see "(Loose files)" in the tree.`);
   }
 
   setStatus(`Found ${state.subfolders.length} subfolder(s) with ${result.totalImages} images. Click a folder to start.`);
@@ -626,6 +651,20 @@ async function buildSourceTree() {
   const treeList = document.getElementById('tree-list');
   treeList.innerHTML = '';
   document.getElementById('tree-header').textContent = 'Folders';
+
+  // Pseudo-entry for images at the root with no subfolder. Lets the user
+  // browse / select / group them without flipping a modal on folder open.
+  if ((state.looseImages || []).length > 0) {
+    const item = document.createElement('div');
+    item.className = 'tree-item tree-loose-entry';
+    item.dataset.index = '-1';
+    item.innerHTML = `<span class="tree-name">(Loose files)</span><span class="tree-count">(${state.looseImages.length})</span>`;
+    item.title = 'Image files at the root of this folder, not grouped into tablet subfolders. Click to browse and group them.';
+    item.addEventListener('click', () => {
+      loadLoosePickerImages();
+    });
+    treeList.appendChild(item);
+  }
 
   // Cross-reference against the export folder so picker rows can show
   // "picked / total" and a ✓ when the tablet has been exported. The scan is
@@ -929,6 +968,13 @@ function updateSelectionUI() {
     card.classList.toggle('selected', isSelected);
     card.classList.toggle('primary', isPrimary);
   });
+
+  // Refresh the Picker's Convert-RAW button counts whenever the selection
+  // changes — selection state is the only input the "Convert selected (N)"
+  // label depends on that isn't already tracked elsewhere.
+  if (typeof updateConvertRawButtons === 'function') {
+    updateConvertRawButtons();
+  }
 
   // Scroll primary into view
   if (state.selectedImage) {
@@ -2671,6 +2717,149 @@ async function saveSettings() {
 
 // === Stitcher Processing ===
 let isStitcherRunning = false;
+let isConvertRawRunning = false;
+
+async function onConvertRawClick(scope) {
+  if (isStitcherRunning || isConvertRawRunning) {
+    alert('Another stitcher / conversion run is already in progress.');
+    return;
+  }
+  if (!state.rootFolder) {
+    alert('Open a source folder first.');
+    return;
+  }
+
+  // 'project' scope sends no explicit file list — the Python side walks the
+  // root recursively. The other scopes send a specific list from state.
+  if (scope === 'project') {
+    const subfolders = state.subfolders || [];
+    let total = 0;
+    for (const sub of subfolders) {
+      for (const img of (sub.images || [])) {
+        if (RAW_EXTENSION_RE.test(img.name)) total++;
+      }
+    }
+    if (total === 0) {
+      alert('No RAW files found anywhere in this project.');
+      return;
+    }
+    const ok = confirm(
+      `Convert ${total} RAW file(s) across ${subfolders.length} subfolder(s) to 16-bit TIFF?\n\n` +
+      `Output:    TIFFs saved next to each source file (same folder).\n` +
+      `Existing TIFFs with the same name will be skipped.\n` +
+      `Originals are NOT deleted.\n\n` +
+      `This can take a while on large projects.`
+    );
+    if (!ok) return;
+    await runConvertRaw(null); // null = let Python walk the root
+    return;
+  }
+
+  const rawImages = (state.images || []).filter(i => RAW_EXTENSION_RE.test(i.name));
+  const files = scope === 'selected'
+    ? rawImages.filter(i => state.selectedImages.has(i.path))
+    : rawImages;
+
+  if (files.length === 0) {
+    alert(scope === 'selected'
+      ? 'No RAW files in the current selection.'
+      : 'No RAW files in this folder.');
+    return;
+  }
+
+  const totalSelected = scope === 'selected' ? state.selectedImages.size : files.length;
+  const mixedNote = scope === 'selected' && totalSelected > files.length
+    ? `\n${totalSelected - files.length} non-RAW file(s) in the selection will be ignored.`
+    : '';
+
+  const ok = confirm(
+    `Convert ${files.length} RAW file(s) to 16-bit TIFF?\n\n` +
+    `Output:    TIFFs saved next to each source file (same folder).\n` +
+    `Existing TIFFs with the same name will be skipped.\n` +
+    `Originals are NOT deleted.` + mixedNote
+  );
+  if (!ok) return;
+
+  await runConvertRaw(files.map(f => f.path));
+}
+
+async function runConvertRaw(filePaths) {
+  const verification = await window.api.verifyStitcherExe();
+  if (!verification.valid) {
+    alert(`Bundled stitcher not found: ${verification.reason}\n\nThis indicates a broken install — please reinstall eBL Tablet Studio.`);
+    return;
+  }
+
+  isConvertRawRunning = true;
+  updateConvertRawButtons();
+
+  // Populate the Dashboard log in the background (for users who want full
+  // detail) but stay on the Picker so the progress bar in the Conversion
+  // tab is front-and-center.
+  const statusEl = document.getElementById('stitcher-status');
+  const dashProgressEl = document.getElementById('stitcher-progress');
+  const dashEmpty = document.getElementById('dashboard-empty');
+  const pickerStatus = document.getElementById('picker-convert-status');
+  const pickerBar = document.getElementById('picker-convert-progress');
+  const pickerLabel = document.getElementById('picker-convert-label');
+
+  if (dashEmpty) dashEmpty.classList.add('hidden');
+  if (statusEl) {
+    statusEl.classList.remove('hidden');
+    statusEl.replaceChildren();
+    const startLine = filePaths
+      ? `Converting ${filePaths.length} RAW file(s)...`
+      : `Scanning project for RAW files and converting all of them...`;
+    appendStitcherLine(statusEl, startLine);
+  }
+  if (dashProgressEl) {
+    dashProgressEl.classList.remove('hidden');
+    dashProgressEl.value = 0;
+  }
+  if (pickerStatus) pickerStatus.classList.remove('hidden');
+  if (pickerBar) pickerBar.value = 0;
+  if (pickerLabel) {
+    pickerLabel.textContent = filePaths
+      ? `Converting ${filePaths.length} RAW file(s)...`
+      : 'Scanning project for RAW files...';
+  }
+
+  setStatus(`Converting RAW → TIFF...`);
+
+  const result = await window.api.convertRawFiles(state.rootFolder, filePaths);
+
+  isConvertRawRunning = false;
+  updateConvertRawButtons();
+  if (dashProgressEl) dashProgressEl.value = 100;
+  if (pickerBar) pickerBar.value = 100;
+
+  if (statusEl) {
+    appendStitcherLine(statusEl, '');
+    appendStitcherLine(statusEl, result.success
+      ? '=== RAW CONVERSION DONE ==='
+      : `=== RAW CONVERSION FINISHED (exit code ${result.exitCode}) ===`);
+  }
+
+  if (pickerLabel) {
+    pickerLabel.textContent = result.success
+      ? 'Done. See Results → Dashboard for per-file details.'
+      : `Finished with errors (exit ${result.exitCode}). See Results → Dashboard.`;
+  }
+
+  setStatus(result.success
+    ? 'RAW → TIFF conversion finished.'
+    : `RAW → TIFF finished with errors (exit ${result.exitCode}).`);
+
+  // Cancel any pending debounced auto-refresh so we don't rescan twice.
+  if (_convertRefreshTimer) {
+    clearTimeout(_convertRefreshTimer);
+    _convertRefreshTimer = null;
+  }
+
+  // Final disk rescan to guarantee the tree + grid reflect every new TIFF,
+  // including any file that landed after the last debounced auto-refresh.
+  await refreshFromDisk();
+}
 
 // Helper: check if a tablet can be processed by the current user.
 // Only tablets assigned to the current user OR unassigned are processable.
@@ -2906,16 +3095,48 @@ function appendStitcherLine(statusEl, text) {
   }
 }
 
+const CONVERT_RAW_LINE_RE = /^\[(\d+)\/(\d+)\]\s+(Converting|Skipping)\s+(.+?)(?:\s+—|\s+→|$)/;
+
+let _convertRefreshTimer = null;
+function scheduleConvertRefresh() {
+  // Debounced rescan while a conversion run is active. The progress stream
+  // fires one "Converting …" line per file; chaining a refresh to each
+  // would thrash disk I/O and flicker the grid. A 2s debounce lets a burst
+  // of file completions coalesce into a single rescan.
+  if (_convertRefreshTimer) clearTimeout(_convertRefreshTimer);
+  _convertRefreshTimer = setTimeout(() => {
+    _convertRefreshTimer = null;
+    if (isConvertRawRunning) {
+      refreshFromDisk().catch(err => console.error('Auto-refresh failed:', err));
+    }
+  }, 2000);
+}
+
 function handleStitcherProgress(event) {
   const statusEl = document.getElementById('stitcher-status');
   if (!statusEl) return;
 
   if (event.type === 'progress') {
-    setStatus(`Stitcher: ${event.value}%`);
+    const pct = event.value;
+    setStatus(isConvertRawRunning ? `Converting RAW: ${pct}%` : `Stitcher: ${pct}%`);
     const progressEl = document.getElementById('stitcher-progress');
-    if (progressEl) progressEl.value = event.value;
+    if (progressEl) progressEl.value = pct;
+    const pickerBar = document.getElementById('picker-convert-progress');
+    if (pickerBar && isConvertRawRunning) pickerBar.value = pct;
   } else if (event.type === 'log' || event.type === 'stderr') {
     appendStitcherLine(statusEl, event.message);
+    // While a RAW conversion is running, mirror the "[n/m] Converting foo.cr2"
+    // lines into the Conversion tab's status label AND schedule a debounced
+    // rescan so new TIFFs appear in the grid without the user clicking refresh.
+    if (isConvertRawRunning) {
+      const pickerLabel = document.getElementById('picker-convert-label');
+      const m = event.message.match(CONVERT_RAW_LINE_RE);
+      if (m && pickerLabel) {
+        const verb = m[3] === 'Skipping' ? 'Skipped' : 'Converting';
+        pickerLabel.textContent = `[${m[1]}/${m[2]}] ${verb} ${m[4]}`;
+      }
+      if (m) scheduleConvertRefresh();
+    }
   } else if (event.type === 'error') {
     appendStitcherLine(statusEl, `ERROR: ${event.message}`);
   }
@@ -2979,7 +3200,12 @@ function switchMode(mode) {
 }
 
 let selectedTreeFolders = []; // cached selected folder scan results
+let selectedTreeLooseImages = []; // loose image files at the root of _Selected/
 let selectedTreeIndex = -1; // current index in selected tree
+
+// Sentinel for the pseudo-entry that represents loose-at-root files in either
+// picker or renamer tree. Negative index distinguishes it from real folders.
+const LOOSE_TREE_INDEX = -42;
 
 async function buildSelectedTree() {
   const treeList = document.getElementById('tree-list');
@@ -2990,14 +3216,33 @@ async function buildSelectedTree() {
   if (!exportBase) {
     treeList.innerHTML = '<div class="tree-empty">No export folder set</div>';
     selectedTreeFolders = [];
+    selectedTreeLooseImages = [];
     return;
   }
 
-  const folders = await window.api.scanSelectedFolder(exportBase);
+  // Backwards-compat: older scanSelectedFolder returned a bare array; new
+  // shape is { subfolders, looseImages }. Normalize so both work.
+  const scan = await window.api.scanSelectedFolder(exportBase);
+  const folders = Array.isArray(scan) ? scan : (scan.subfolders || []);
+  const loose = Array.isArray(scan) ? [] : (scan.looseImages || []);
   selectedTreeFolders = folders;
-  if (folders.length === 0) {
+  selectedTreeLooseImages = loose;
+
+  if (folders.length === 0 && loose.length === 0) {
     treeList.innerHTML = '<div class="tree-empty">No exported tablets yet</div>';
     return;
+  }
+
+  if (loose.length > 0) {
+    const item = document.createElement('div');
+    item.className = 'tree-item tree-loose-entry';
+    item.dataset.selectedIndex = String(LOOSE_TREE_INDEX);
+    item.innerHTML = `<span class="tree-name">(Loose files)</span><span class="tree-count">(${loose.length})</span>`;
+    item.title = 'Image files at the root of the Selected folder, not in any tablet subfolder. Click to browse and group them.';
+    item.addEventListener('click', () => {
+      loadLooseSelectedImages();
+    });
+    treeList.appendChild(item);
   }
 
   for (let i = 0; i < folders.length; i++) {
@@ -3013,6 +3258,78 @@ async function buildSelectedTree() {
   }
 
   updateTreeStatusIcons();
+}
+
+async function loadLoosePickerImages() {
+  // Picker-side equivalent: expose the root-level loose images in the grid so
+  // the user can select / pick / organize them without needing per-tablet
+  // subfolders to exist first.
+  if (isViewerOpen()) exitViewerMode();
+  state.currentIndex = -1;
+  state.images = (state.looseImages || []).map(f => ({
+    path: f.path, name: f.name, ext: f.ext,
+    detectedView: null,
+  }));
+  state.selectedImage = null;
+  state.selectedImages.clear();
+  state.lastClickedIndex = -1;
+  state.assignments = {};
+  state.reverseAssignments = {};
+
+  dom.subfolderInfo.textContent = `(Loose files in ${state.rootFolder})  (${state.images.length})`;
+  dom.btnPrev.disabled = true;
+  dom.btnNext.disabled = true;
+  dom.btnSkip.disabled = true;
+
+  document.querySelectorAll('.tree-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.index === '-1');
+  });
+
+  dom.thumbGrid.innerHTML = '';
+  for (const img of state.images) {
+    dom.thumbGrid.appendChild(createThumbCard(img));
+  }
+  for (const img of state.images) {
+    loadThumbnail(img.path, getCardForImage(img.path));
+  }
+  updateSelectionUI();
+  updatePickerFolderStats();
+  setStatus(`${state.images.length} loose file(s). Select some, then use Settings → "Group selected into folder…" or "Organize by filename (auto)".`);
+}
+
+async function loadLooseSelectedImages() {
+  // Show loose files from the renamer's _Selected root in the thumbnail grid
+  // so the user can browse + select them, then group into a named folder.
+  if (isViewerOpen()) exitViewerMode();
+  const exportBase = customExportFolder || (state.rootFolder + '/_Selected');
+  state.images = selectedTreeLooseImages.map(f => ({
+    path: f.path, name: f.name, ext: f.ext,
+    detectedView: null,
+  }));
+  state.selectedImage = null;
+  state.selectedImages.clear();
+  state.lastClickedIndex = -1;
+  state.assignments = {};
+  state.reverseAssignments = {};
+  selectedTreeIndex = LOOSE_TREE_INDEX;
+
+  dom.subfolderInfo.textContent = `(Loose files in ${exportBase})  (${state.images.length})`;
+  dom.btnPrev.disabled = true;
+  dom.btnNext.disabled = true;
+  dom.btnSkip.disabled = true;
+
+  document.querySelectorAll('.tree-item').forEach(el => {
+    el.classList.toggle('active', parseInt(el.dataset.selectedIndex) === LOOSE_TREE_INDEX);
+  });
+
+  dom.thumbGrid.innerHTML = '';
+  for (const img of state.images) {
+    dom.thumbGrid.appendChild(createThumbCard(img));
+  }
+  for (const img of state.images) {
+    loadThumbnail(img.path, getCardForImage(img.path));
+  }
+  setStatus(`${state.images.length} loose file(s). Select some, then use "Group selected into folder…" in the Picker's Settings tab or the renamer's toolbar.`);
 }
 
 async function loadSelectedFolder(index) {
@@ -3077,6 +3394,272 @@ async function loadSelectedFolder(index) {
   updateStatusCount();
 }
 
+const RAW_EXTENSION_RE = /\.(cr2|cr3|nef|arw|raf|rw2)$/i;
+
+function setPickerTab(name) {
+  if (!name) return;
+  document.querySelectorAll('.picker-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.pickerTab === name);
+  });
+  document.querySelectorAll('.picker-tab-panel').forEach(panel => {
+    panel.classList.toggle('active', panel.dataset.pickerPanel === name);
+  });
+}
+
+function updatePickerFolderStats() {
+  const nameEl = document.getElementById('picker-stat-name');
+  const totalEl = document.getElementById('picker-stat-total');
+  const rawEl = document.getElementById('picker-stat-raw');
+  const pickedEl = document.getElementById('picker-stat-picked');
+  const clearBtn = document.getElementById('btn-picker-clear-picks');
+  const revealBtn = document.getElementById('btn-picker-reveal');
+  const orgBtn = document.getElementById('btn-picker-organize');
+  if (!nameEl) return;
+
+  // Organize button reflects loose photos at the root — doesn't depend on
+  // a specific subfolder being open.
+  const looseCount = (state.looseImages || []).length;
+  if (orgBtn) {
+    orgBtn.textContent = `Organize by filename (auto) — ${looseCount} loose`;
+    orgBtn.disabled = looseCount === 0;
+  }
+
+  // Group-selected button: enabled whenever the grid has at least one
+  // selected file AND we're currently showing the loose images (otherwise
+  // grouping "selected" from inside a real subfolder doesn't make sense).
+  const groupBtn = document.getElementById('btn-picker-group-selected');
+  if (groupBtn) {
+    const viewingLoose = state.currentIndex === -1 && (state.looseImages || []).length > 0;
+    const selCount = state.selectedImages ? state.selectedImages.size : 0;
+    groupBtn.textContent = `Group selected into folder… (${selCount})`;
+    groupBtn.disabled = !viewingLoose || selCount === 0;
+  }
+
+  const sub = state.subfolders[state.currentIndex];
+  if (!sub) {
+    // If we're browsing the "(Loose files)" pseudo-entry, show its stats;
+    // otherwise fall back to the blank state.
+    const viewingLoose = state.currentIndex === -1 && (state.images || []).length > 0
+      && (state.looseImages || []).length > 0;
+    if (viewingLoose) {
+      const images = state.images || [];
+      const rawCount = images.filter(i => RAW_EXTENSION_RE.test(i.name)).length;
+      nameEl.textContent = '(Loose files)';
+      totalEl.textContent = String(images.length);
+      rawEl.textContent = String(rawCount);
+      pickedEl.textContent = String(Object.keys(state.assignments || {}).length);
+      clearBtn.disabled = Object.keys(state.assignments || {}).length === 0;
+      revealBtn.disabled = !state.rootFolder;
+    } else {
+      nameEl.textContent = '—';
+      totalEl.textContent = '0';
+      rawEl.textContent = '0';
+      pickedEl.textContent = '0';
+      clearBtn.disabled = true;
+      revealBtn.disabled = true;
+    }
+    return;
+  }
+
+  const images = state.images || [];
+  const rawCount = images.filter(i => RAW_EXTENSION_RE.test(i.name)).length;
+  const pickedCount = Object.keys(state.assignments || {}).length;
+
+  nameEl.textContent = sub.name;
+  totalEl.textContent = String(images.length);
+  rawEl.textContent = String(rawCount);
+  pickedEl.textContent = String(pickedCount);
+  clearBtn.disabled = pickedCount === 0;
+  revealBtn.disabled = !sub.path;
+}
+
+async function onPickerClearPicks() {
+  if (!state.subfolders[state.currentIndex]) return;
+  const pickedCount = Object.keys(state.assignments || {}).length;
+  if (pickedCount === 0) return;
+  const ok = confirm(`Clear all ${pickedCount} pick(s) in this folder? The image files are not touched — this only resets the assignment list.`);
+  if (!ok) return;
+  state.assignments = {};
+  updatePickerList();
+  updatePickerFolderStats();
+  setStatus('Picks cleared for this folder.');
+}
+
+async function onPickerRevealFolder() {
+  const sub = state.subfolders[state.currentIndex];
+  if (!sub || !sub.path) return;
+  await window.api.revealInExplorer(sub.path);
+}
+
+function showGroupSelectedPrompt() {
+  const row = document.getElementById('picker-group-name-row');
+  const input = document.getElementById('picker-group-name-input');
+  if (!state.selectedImages || state.selectedImages.size === 0) {
+    alert('Select one or more loose files in the grid first.');
+    return;
+  }
+  row.classList.remove('hidden');
+  input.value = '';
+  input.focus();
+}
+
+function hideGroupSelectedPrompt() {
+  document.getElementById('picker-group-name-row').classList.add('hidden');
+  document.getElementById('picker-group-name-input').value = '';
+}
+
+async function confirmGroupSelected() {
+  const input = document.getElementById('picker-group-name-input');
+  const folderName = input.value.trim();
+  if (!folderName) {
+    alert('Enter a folder name.');
+    return;
+  }
+  const selectedPaths = Array.from(state.selectedImages || []);
+  if (selectedPaths.length === 0) {
+    alert('Select one or more files first.');
+    return;
+  }
+  setStatus(`Moving ${selectedPaths.length} file(s) into "${folderName}/"...`);
+  try {
+    const result = await window.api.moveFilesToFolder(selectedPaths, folderName);
+    if (result.error) {
+      alert(`Could not group files: ${result.error}`);
+      return;
+    }
+    const parts = [`Moved ${result.moved.length} into "${folderName}/"`];
+    if (result.collisions.length > 0) parts.push(`${result.collisions.length} skipped (name conflict)`);
+    setStatus(parts.join('; ') + '.');
+    hideGroupSelectedPrompt();
+    await refreshFromDisk();
+  } catch (err) {
+    console.error('Group failed:', err);
+    alert(`Could not group files: ${err.message}`);
+  }
+}
+
+/**
+ * Organizer entry point from the Settings tab. Uses the current state's
+ * loose-image count; opens the same confirm dialog as the auto-prompt.
+ */
+async function onPickerOrganizeClick() {
+  if (!state.rootFolder) return;
+  const count = (state.looseImages || []).length;
+  if (count === 0) {
+    setStatus('No loose photos to organize in this folder.');
+    return;
+  }
+  const accepted = await promptOrganizeLoosePhotos(state.rootFolder, count);
+  if (accepted) {
+    await openFolder(state.rootFolder);
+  }
+}
+
+/**
+ * Show the confirm dialog + run the organizer, reporting per-file stats.
+ * Returns true if files were actually moved (so the caller knows whether to
+ * re-scan), false if the user canceled or nothing happened.
+ */
+async function promptOrganizeLoosePhotos(rootFolder, count) {
+  const ok = confirm(
+    `This folder contains ${count} photo file(s) not grouped into tablet subfolders.\n\n` +
+    `Organize them automatically by filename?\n` +
+    `  Files matching "<TabletID>_<view>.<ext>" (e.g. Si.32_01.jpg) move into\n` +
+    `  "<TabletID>/" subfolders.\n\n` +
+    `Unmatched files stay at the root. Existing files in target subfolders\n` +
+    `are not overwritten.`
+  );
+  if (!ok) return false;
+
+  setStatus(`Organizing ${count} photo(s)...`);
+  try {
+    const result = await window.api.organizeLoosePhotos(rootFolder);
+    const parts = [`Moved ${result.moved.length}`];
+    if (result.skipped.length > 0) parts.push(`skipped ${result.skipped.length} (didn't match pattern)`);
+    if (result.collisions.length > 0) parts.push(`skipped ${result.collisions.length} (collision)`);
+    setStatus(parts.join('; ') + '.');
+    return result.moved.length > 0;
+  } catch (err) {
+    console.error('Organize failed:', err);
+    alert(`Could not organize photos: ${err.message}`);
+    return false;
+  }
+}
+
+/**
+ * Re-scan the root from disk and rebuild both the tree and the currently-
+ * opened subfolder. Picks up new files created by the RAW converter and
+ * drops files that were deleted externally.
+ *
+ * Works in both picker and renamer modes — each mode uses its own scanner
+ * (scanFolder for the source tree, scanSelectedFolder for the export tree).
+ */
+async function refreshFromDisk() {
+  if (!state.rootFolder) {
+    setStatus('Open a folder first.');
+    return;
+  }
+  const btn = document.getElementById('btn-tree-refresh');
+  if (btn) btn.disabled = true;
+  try {
+    if (appMode === 'renamer') {
+      await buildSelectedTree();
+      if (selectedTreeIndex >= 0 && selectedTreeFolders[selectedTreeIndex]) {
+        await loadSelectedFolder(selectedTreeIndex);
+      }
+    } else {
+      const result = await window.api.scanFolder(state.rootFolder);
+      state.subfolders = result.subfolders;
+      state.looseImages = result.looseImages || [];
+      buildTreeView();
+      if (state.subfolders[state.currentIndex]) {
+        await loadCurrentSubfolder();
+      } else {
+        // Refresh Settings-tab stats so the Organize button reflects any
+        // change in loose-photo count (e.g. after a RAW conversion wrote
+        // TIFFs next to the originals at the root).
+        updatePickerFolderStats();
+      }
+    }
+    setStatus('Folder rescanned from disk.');
+  } catch (err) {
+    console.error('Refresh failed:', err);
+    setStatus(`Refresh failed: ${err.message}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function updateConvertRawButtons() {
+  const selBtn = document.getElementById('btn-convert-raw-selected');
+  const allBtn = document.getElementById('btn-convert-raw-all');
+  const projBtn = document.getElementById('btn-convert-raw-project');
+  if (!selBtn || !allBtn || !projBtn) return;
+
+  const images = (state.images || []).filter(i => RAW_EXTENSION_RE.test(i.name));
+  const selectedRaw = images.filter(i => state.selectedImages.has(i.path));
+  const allCount = images.length;
+  const selCount = selectedRaw.length;
+
+  // Project-wide count: sum CR2s across every scanned subfolder.
+  let projectCount = 0;
+  for (const sub of (state.subfolders || [])) {
+    if (!sub.images) continue;
+    for (const img of sub.images) {
+      if (RAW_EXTENSION_RE.test(img.name)) projectCount++;
+    }
+  }
+
+  selBtn.textContent = `Convert selected (${selCount})`;
+  allBtn.textContent = `Convert all in folder (${allCount})`;
+  projBtn.textContent = `Convert entire project (${projectCount})`;
+
+  const busy = isStitcherRunning || isConvertRawRunning;
+  selBtn.disabled = busy || selCount === 0;
+  allBtn.disabled = busy || allCount === 0;
+  projBtn.disabled = busy || projectCount === 0;
+}
+
 function updatePickerList() {
   if (appMode !== 'picker') return;
 
@@ -3085,12 +3668,16 @@ function updatePickerList() {
   const exportBtn = document.getElementById('btn-export-selected');
   if (!listEl) return;
 
+  updateConvertRawButtons();
+
   listEl.innerHTML = '';
   const picks = Object.entries(state.assignments)
     .sort(([, a], [, b]) => a.localeCompare(b));
 
   countEl.textContent = `${picks.length} picked`;
   exportBtn.disabled = picks.length === 0;
+
+  updatePickerFolderStats();
 
   for (const [imgPath, code] of picks) {
     const img = state.images.find(i => i.path === imgPath);
@@ -3176,8 +3763,27 @@ async function onExportSelected() {
     return;
   }
 
+  // When viewing the "(Loose files)" pseudo-entry there's no real subfolder
+  // to read the tablet name from. Prompt the user for one instead. This keeps
+  // the loose-files → export flow unblocked for photos whose filenames don't
+  // already carry a tablet ID.
+  let tabletName;
   const sub = state.subfolders[state.currentIndex];
-  const tabletName = sub.name.replace(/(\w+)\s+(\d+)/g, '$1.$2');
+  if (sub) {
+    tabletName = sub.name.replace(/(\w+)\s+(\d+)/g, '$1.$2');
+  } else {
+    const entered = await promptForText(
+      'Tablet name',
+      'Will create a subfolder by this name under the export folder.',
+      'e.g. Si.32'
+    );
+    if (entered === null) return; // user canceled
+    tabletName = entered;
+    if (/[\\/:*?"<>|]/.test(tabletName) || tabletName === '.' || tabletName === '..') {
+      alert('Invalid tablet name.');
+      return;
+    }
+  }
 
   const lines = Object.entries(state.assignments)
     .sort(([, a], [, b]) => a.localeCompare(b))
@@ -3220,6 +3826,76 @@ async function onExportSelected() {
 
 // === User Identity (collaboration) ===
 // On startup, load or prompt for a display name. Used for tablet assignments.
+
+/**
+ * Modal text prompt (Electron disables window.prompt, so this is our
+ * stand-in). Returns the entered string, or null if the user cancels.
+ */
+function promptForText(title, message, placeholder = '', defaultValue = '') {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('text-prompt-overlay');
+    const titleEl = document.getElementById('text-prompt-title');
+    const messageEl = document.getElementById('text-prompt-message');
+    const input = document.getElementById('text-prompt-input');
+    const okBtn = document.getElementById('text-prompt-ok');
+    const cancelBtn = document.getElementById('text-prompt-cancel');
+
+    titleEl.textContent = title;
+    messageEl.textContent = message || '';
+    messageEl.style.display = message ? '' : 'none';
+    input.placeholder = placeholder;
+    input.value = defaultValue;
+    input.disabled = false;
+    input.readOnly = false;
+    overlay.classList.remove('hidden');
+    // requestAnimationFrame so the layout settles before focusing — otherwise
+    // Electron sometimes drops the .focus() call silently when the element
+    // was just un-hidden in the same frame and the user can't type.
+    requestAnimationFrame(() => {
+      input.focus();
+      input.select();
+    });
+
+    const cleanup = () => {
+      overlay.classList.add('hidden');
+      okBtn.removeEventListener('click', submit);
+      cancelBtn.removeEventListener('click', cancel);
+      input.removeEventListener('keydown', keyHandler);
+      overlay.removeEventListener('keydown', trapKeys, true);
+      overlay.removeEventListener('click', outsideClick);
+    };
+
+    function submit() {
+      const val = input.value.trim();
+      cleanup();
+      resolve(val || null);
+    }
+    function cancel() {
+      cleanup();
+      resolve(null);
+    }
+    function keyHandler(e) {
+      if (e.key === 'Enter') { e.preventDefault(); submit(); }
+      else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+    }
+    // Capture-phase handler on the overlay so global keyboard shortcuts
+    // (Ctrl+S, Ctrl+E in the main onKeyDown) don't fire while the modal is
+    // open — the user's typing was falling through to them and triggering
+    // the full export flow mid-input.
+    function trapKeys(e) {
+      e.stopPropagation();
+    }
+    function outsideClick(e) {
+      if (e.target === overlay) cancel();
+    }
+
+    okBtn.addEventListener('click', submit);
+    cancelBtn.addEventListener('click', cancel);
+    input.addEventListener('keydown', keyHandler);
+    overlay.addEventListener('keydown', trapKeys, true);
+    overlay.addEventListener('click', outsideClick);
+  });
+}
 
 function showUserNameDialog(prefill) {
   return new Promise((resolve) => {

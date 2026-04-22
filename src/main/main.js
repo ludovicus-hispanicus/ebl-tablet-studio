@@ -1,12 +1,13 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { scanFolder, generateThumbnail, renameFiles, getImageInfo } = require('./file-ops');
+const { scanFolder, generateThumbnail, renameFiles, getImageInfo, organizeLoosePhotos } = require('./file-ops');
 const {
   loadStitcherConfig,
   saveStitcherConfig,
   verifyStitcherExe,
   runStitcherHeadless,
+  runStitcherConvertRaw,
 } = require('./stitcher-bridge');
 const projectManager = require('./project-manager');
 const segBridge = require('./segmentation-bridge');
@@ -329,6 +330,55 @@ ipcMain.handle('scan-folder', async (event, folderPath) => {
   return scanFolder(folderPath);
 });
 
+ipcMain.handle('organize-loose-photos', async (event, folderPath) => {
+  return organizeLoosePhotos(folderPath);
+});
+
+// Move a batch of files into a new subfolder under their shared parent
+// directory. Used by the "Group selected into folder..." action for loose
+// files that don't match the `<id>_<view>.<ext>` pattern the auto-organizer
+// keys off. folderName is validated to keep the new subfolder under the
+// original parent — no escaping allowed.
+ipcMain.handle('move-files-to-folder', async (event, filePaths, folderName) => {
+  if (!Array.isArray(filePaths) || filePaths.length === 0) {
+    return { moved: [], collisions: [], error: 'No files provided.' };
+  }
+  const trimmed = (folderName || '').trim();
+  if (!trimmed || /[\\/:*?"<>|]/.test(trimmed) || trimmed === '.' || trimmed === '..') {
+    return { moved: [], collisions: [], error: 'Invalid folder name.' };
+  }
+  // All files must share a parent — otherwise we'd need multiple target dirs.
+  const parents = new Set(filePaths.map(p => path.dirname(p)));
+  if (parents.size > 1) {
+    return { moved: [], collisions: [], error: 'Selected files are in different folders.' };
+  }
+  const parent = [...parents][0];
+  const targetDir = path.join(parent, trimmed);
+  const result = { moved: [], collisions: [], error: null };
+  try {
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+  } catch (err) {
+    return { moved: [], collisions: [], error: `Could not create folder: ${err.message}` };
+  }
+  for (const src of filePaths) {
+    try {
+      const dst = path.join(targetDir, path.basename(src));
+      if (fs.existsSync(dst)) {
+        result.collisions.push(path.basename(src));
+        continue;
+      }
+      fs.renameSync(src, dst);
+      result.moved.push(path.basename(src));
+    } catch (err) {
+      console.error(`move-files-to-folder: ${src}: ${err.message}`);
+      result.collisions.push(path.basename(src));
+    }
+  }
+  return result;
+});
+
 ipcMain.handle('get-thumbnail', async (event, imagePath) => {
   return generateThumbnail(imagePath);
 });
@@ -416,6 +466,16 @@ ipcMain.handle('process-tablets', async (event, rootFolder, tablets) => {
   return runStitcherHeadless(config.stitcherExe, rootFolder, tablets, (progress) => {
     mainWindow.webContents.send('stitcher-progress', progress);
   }, extraArgs);
+});
+
+// RAW (.cr2 / .cr3 / .nef / .arw) → 16-bit TIFF batch conversion. Reuses
+// the stitcher's rawpy-based `convert_raw_image_to_tiff` via a new CLI
+// mode on the bundled binary. Progress streams through the same
+// stitcher-progress channel so the Dashboard log pane just works.
+ipcMain.handle('convert-raw-files', async (event, rootFolder, files) => {
+  return runStitcherConvertRaw(rootFolder, files, (progress) => {
+    mainWindow.webContents.send('stitcher-progress', progress);
+  });
 });
 
 ipcMain.handle('delete-image', async (event, imagePath) => {
@@ -531,14 +591,32 @@ ipcMain.handle('clean-tablet-cache', async (event, rootFolder, tabletNames) => {
 });
 
 ipcMain.handle('scan-selected-folder', async (event, folderPath) => {
-  // Scan a folder for subfolders containing images (the export/selected folder)
-  if (!folderPath || !fs.existsSync(folderPath)) return [];
+  // Scan a folder for subfolders containing images AND any loose image files
+  // at the root. Returns { subfolders, looseImages } so the renamer can offer
+  // the same "group into a folder" flow the picker has.
+  if (!folderPath || !fs.existsSync(folderPath)) {
+    return { subfolders: [], looseImages: [] };
+  }
   const entries = fs.readdirSync(folderPath, { withFileTypes: true });
-  const results = [];
-  const imageExts = new Set(['.jpg', '.jpeg', '.png', '.tif', '.tiff', '.cr3', '.nef', '.arw']);
+  const subfolders = [];
+  const looseImages = [];
+  const imageExts = new Set([
+    '.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp', '.heic', '.heif',
+    '.cr2', '.cr3', '.nef', '.arw', '.raf', '.rw2',
+  ]);
   for (const entry of entries) {
+    if (entry.isFile()) {
+      const ext = path.extname(entry.name).toLowerCase();
+      if (imageExts.has(ext) && !/_mask\.(png|tif|tiff|jpg|jpeg)$/i.test(entry.name)) {
+        looseImages.push({
+          path: path.join(folderPath, entry.name),
+          name: entry.name,
+          ext,
+        });
+      }
+      continue;
+    }
     if (!entry.isDirectory()) continue;
-    // Skip underscore-prefixed folders (_Final_JPG, _Final_TIFF, _Raw, _cleaned, etc.)
     if (entry.name.startsWith('_')) continue;
     const subPath = path.join(folderPath, entry.name);
     const files = fs.readdirSync(subPath);
@@ -547,13 +625,13 @@ ipcMain.handle('scan-selected-folder', async (event, folderPath) => {
       !/_mask\.(png|tif|tiff|jpg|jpeg)$/i.test(f)
     );
     if (imageFiles.length > 0) {
-      results.push({ name: entry.name, path: subPath, imageCount: imageFiles.length });
+      subfolders.push({ name: entry.name, path: subPath, imageCount: imageFiles.length });
     }
   }
-  results.sort((a, b) =>
+  subfolders.sort((a, b) =>
     a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
   );
-  return results;
+  return { subfolders, looseImages };
 });
 
 // === Project Management ===

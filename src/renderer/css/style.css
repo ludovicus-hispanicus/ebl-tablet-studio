@@ -206,13 +206,41 @@ main {
   overflow: hidden;
 }
 
+#tree-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 8px 6px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
 #tree-header {
-  padding: 8px 12px;
   font-size: 12px;
   font-weight: 600;
   color: var(--accent);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
+}
+
+#btn-tree-refresh {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-card);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+#btn-tree-refresh:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+#btn-tree-refresh:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 #tree-search {
@@ -1694,13 +1722,18 @@ main {
 }
 
 .tree-item .tree-status.tree-status-empty {
-  color: var(--border);
-  opacity: 0;
+  /* Always visible as a faint empty circle — signals "this row can be
+     assigned a status, click here to cycle". Becomes fully visible on
+     hover and fully opaque once the user hovers the row so they know
+     it's the interactive affordance. */
+  color: var(--text-dim);
+  opacity: 0.45;
   transition: opacity 0.15s;
 }
 
 .tree-item:hover .tree-status.tree-status-empty {
   opacity: 1;
+  color: var(--accent);
 }
 
 /* === Status Bar === */
@@ -1731,7 +1764,8 @@ main {
 }
 
 /* User name dialog */
-#user-name-overlay {
+#user-name-overlay,
+#text-prompt-overlay {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.6);
@@ -1739,6 +1773,67 @@ main {
   align-items: center;
   justify-content: center;
   z-index: 300;
+}
+
+#text-prompt-overlay.hidden {
+  display: none;
+}
+
+#text-prompt-panel {
+  background: var(--bg-light);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 24px;
+  min-width: 340px;
+  max-width: 460px;
+}
+
+#text-prompt-panel h3 {
+  margin-bottom: 8px;
+  color: var(--text);
+}
+
+#text-prompt-input {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: inherit;
+}
+
+#text-prompt-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+#text-prompt-panel button {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-card);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  min-width: 80px;
+}
+
+#text-prompt-panel button:hover {
+  background: var(--slot-hover);
+  border-color: var(--accent);
+}
+
+#text-prompt-panel #text-prompt-ok {
+  background: var(--accent);
+  color: var(--bg-dark, #111);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+#text-prompt-panel #text-prompt-ok:hover {
+  background: var(--accent-hover, var(--accent));
 }
 
 #user-name-overlay.hidden {
@@ -2666,4 +2761,206 @@ body.picker-mode #picker-panel { display: flex; }
 
 /* Hide picker panel in renamer mode (default) */
 body:not(.picker-mode) #picker-panel { display: none; }
+
+#picker-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  margin: 6px 0 10px;
+  flex-shrink: 0;
+}
+
+.picker-tab {
+  flex: 1;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 11px;
+  border-bottom: 2px solid transparent;
+  transition: color 0.1s, border-color 0.1s;
+}
+
+.picker-tab:hover:not(.active) {
+  color: var(--text);
+}
+
+.picker-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.picker-tab-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.picker-tab-panel:not(.active) {
+  display: none;
+}
+
+#picker-raw-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#picker-convert-status.hidden {
+  display: none;
+}
+
+#picker-convert-status {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#picker-convert-progress {
+  width: 100%;
+  height: 8px;
+  border: none;
+  border-radius: 4px;
+  background: var(--bg-card);
+  overflow: hidden;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+#picker-convert-progress::-webkit-progress-bar {
+  background: var(--bg-card);
+  border-radius: 4px;
+}
+
+#picker-convert-progress::-webkit-progress-value {
+  background: var(--accent);
+  border-radius: 4px;
+  transition: width 120ms linear;
+}
+
+#picker-convert-progress::-moz-progress-bar {
+  background: var(--accent);
+  border-radius: 4px;
+}
+
+#picker-convert-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 0 2px;
+}
+
+.picker-section-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  padding: 0 2px;
+}
+
+.picker-section-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 0 2px;
+  line-height: 1.4;
+}
+
+.picker-section-hint code {
+  background: var(--bg-card);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+}
+
+.picker-raw-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.picker-raw-actions button,
+.picker-settings-actions button {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-card);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 11px;
+  text-align: left;
+}
+
+.picker-raw-actions button:hover:not(:disabled),
+.picker-settings-actions button:hover:not(:disabled) {
+  background: var(--slot-hover);
+  border-color: var(--accent);
+}
+
+.picker-raw-actions button:disabled,
+.picker-settings-actions button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+#picker-folder-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 2px;
+  font-size: 12px;
+}
+
+#picker-folder-stats .stat-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#picker-folder-stats .stat-label {
+  color: var(--text-dim);
+}
+
+.picker-settings-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#picker-group-name-row.hidden {
+  display: none;
+}
+
+#picker-group-name-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 6px;
+}
+
+#picker-group-name-row input[type="text"] {
+  flex: 1;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  padding: 4px 6px;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+#picker-group-name-row input[type="text"]:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.tree-item.tree-loose-entry {
+  font-style: italic;
+  color: var(--accent);
+}
+
+.tree-item.tree-loose-entry .tree-count {
+  font-style: normal;
+}
 

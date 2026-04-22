@@ -4,11 +4,14 @@ const sharp = require('sharp');
 const exifr = require('exifr');
 
 const IMAGE_EXTENSIONS = new Set([
-  '.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp', '.heic', '.heif', '.cr3',
+  '.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp', '.heic', '.heif',
+  // RAW formats: Sharp can't decode them, but exifr extracts the embedded
+  // JPEG preview for thumbnails (see getSharpInput → extractRawPreview).
+  '.cr2', '.cr3', '.nef', '.arw', '.raf', '.rw2',
 ]);
 
 const RAW_ARCHIVE_FOLDER = '_Raw';
-const RAW_EXTENSIONS = new Set(['.cr3', '.heic', '.heif']);
+const RAW_EXTENSIONS = new Set(['.cr2', '.cr3', '.nef', '.arw', '.raf', '.rw2', '.heic', '.heif']);
 
 /**
  * Detect true format of a file by reading its header.
@@ -59,16 +62,30 @@ function preserveRaw(filePath) {
 
 /**
  * Scan a root folder for subfolders containing images.
- * Returns { subfolders: [{ path, name, imageCount }], totalImages }
+ * Returns { subfolders: [{ path, name, imageCount }], totalImages, looseImages }.
+ * looseImages lists any image files living directly at the root (no subfolder).
+ * Used by the Picker to offer "Organize into tablet subfolders" when a user
+ * opens a folder that's been renamed but not grouped yet.
  */
 function scanFolder(folderPath) {
-  const result = { subfolders: [], totalImages: 0 };
+  const result = { subfolders: [], totalImages: 0, looseImages: [] };
 
   if (!fs.existsSync(folderPath)) return result;
 
   const entries = fs.readdirSync(folderPath, { withFileTypes: true });
 
   for (const entry of entries) {
+    if (entry.isFile()) {
+      const ext = path.extname(entry.name).toLowerCase();
+      if (IMAGE_EXTENSIONS.has(ext) && !/_mask\.(png|tif|tiff|jpg|jpeg)$/i.test(entry.name)) {
+        result.looseImages.push({
+          path: path.join(folderPath, entry.name),
+          name: entry.name,
+          ext,
+        });
+      }
+      continue;
+    }
     if (!entry.isDirectory() || entry.name.startsWith('_')) continue;
 
     const subPath = path.join(folderPath, entry.name);
@@ -396,4 +413,77 @@ async function renameFiles(subfolderPath, assignments, tabletId, allImagePaths) 
   return results;
 }
 
-module.exports = { scanFolder, generateThumbnail, renameFiles, getImageInfo, getSharpInput };
+/**
+ * Group loose photos at the root of `folderPath` into per-tablet subfolders.
+ *
+ * Files matching `<tabletId>_<view>.<ext>` (e.g. "Si.32_01.jpg", "Si.32_ob.cr2")
+ * move into `folderPath/<tabletId>/`. The regex below mirrors the stitcher's
+ * `generate_subfoldering_pattern()` in stitcher/lib/put_images_in_subfolders.py
+ * so the Electron pre-step and the headless stitcher run stay in sync.
+ *
+ * Files whose stem is a camera-default prefix (IMG, DSC, DSCN, etc.) are
+ * intentionally left at root — grouping `IMG_0001.cr2` + `IMG_0002.cr2` into
+ * a folder literally named "IMG" would poison the downstream tablet-name
+ * plumbing (export → stitcher → metadata all use folder name as tablet ID).
+ * The user should group those explicitly with "Group selected into folder…".
+ *
+ * Non-matching files are left at root, reported in `skipped`. If the target
+ * subfolder already exists, files are merged into it (no overwrites — if a
+ * same-named file is there, the loose one is left alone and reported in
+ * `collisions`).
+ *
+ * Returns { moved, skipped, collisions } — all arrays of filenames.
+ */
+function organizeLoosePhotos(folderPath) {
+  const VIEW_PATTERN = /^(.+)_(\d+|ot|ob|ol|or|rt|rb|rl|rr|ot\d|ob\d|ol\d|or\d|rt\d|rb\d|rl\d|rr\d|\d{2,3})\.([A-Za-z0-9]+)$/;
+  // Generic camera-default stems. Matched case-insensitive; stems equal to
+  // one of these are NOT treated as tablet IDs.
+  const CAMERA_DEFAULT_STEMS = new Set([
+    'IMG', 'DSC', 'DSCN', 'DCIM', 'P', 'MG', 'GOPR', 'PICT', 'SAM',
+    'PANA', 'PXL', 'FUJI', 'OLYM',
+  ]);
+
+  const result = { moved: [], skipped: [], collisions: [] };
+  if (!fs.existsSync(folderPath)) return result;
+
+  const entries = fs.readdirSync(folderPath, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const ext = path.extname(entry.name).toLowerCase();
+    if (!IMAGE_EXTENSIONS.has(ext)) continue;
+    if (/_mask\.(png|tif|tiff|jpg|jpeg)$/i.test(entry.name)) continue;
+
+    const m = entry.name.match(VIEW_PATTERN);
+    if (!m) {
+      result.skipped.push(entry.name);
+      continue;
+    }
+    const tabletId = m[1];
+    // Reject camera-default stems (IMG, DSC, etc.) — they aren't meaningful
+    // tablet IDs. Those files stay loose for manual grouping.
+    if (CAMERA_DEFAULT_STEMS.has(tabletId.toUpperCase())) {
+      result.skipped.push(entry.name);
+      continue;
+    }
+    const targetDir = path.join(folderPath, tabletId);
+    const sourcePath = path.join(folderPath, entry.name);
+    const destPath = path.join(targetDir, entry.name);
+
+    try {
+      if (!fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+      } else if (fs.existsSync(destPath)) {
+        result.collisions.push(entry.name);
+        continue;
+      }
+      fs.renameSync(sourcePath, destPath);
+      result.moved.push(entry.name);
+    } catch (err) {
+      console.error(`organizeLoosePhotos: failed to move ${entry.name}: ${err.message}`);
+      result.skipped.push(entry.name);
+    }
+  }
+  return result;
+}
+
+module.exports = { scanFolder, generateThumbnail, renameFiles, getImageInfo, getSharpInput, organizeLoosePhotos };
